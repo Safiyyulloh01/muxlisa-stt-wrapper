@@ -285,14 +285,59 @@ def get_token_capsolver(api_key: str) -> Tuple[Optional[str], Optional[str]]:
     return None, "Capsolver timeout"
 
 
+def get_token_nocaptcha(api_key: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Get reCAPTCHA v3 token via NoCaptchaAI.
+    
+    Free tier: 200 solves/day (6,000/month). Scores 0.7-0.9.
+    Sign up at https://nocaptchaai.com
+    """
+    payload = {
+        "clientKey": api_key,
+        "task": {
+            "type": "ReCaptchaV3TaskProxyLess",
+            "websiteURL": PAGE_URL,
+            "websiteKey": RECAPTCHA_SITE_KEY,
+            "pageAction": "enquiryFormSubmit",
+        }
+    }
+    try:
+        r = requests.post("https://api.nocaptchaai.com/createTask", json=payload, timeout=20).json()
+    except Exception as e:
+        return None, f"NoCaptchaAI connection error: {e}"
+
+    if r.get("errorId") != 0:
+        return None, r.get("errorDescription") or r.get("errorCode", str(r))
+
+    task_id = r["taskId"]
+    for _ in range(60):
+        time.sleep(2)
+        try:
+            r = requests.post("https://api.nocaptchaai.com/getTaskResult",
+                            json={"clientKey": api_key, "taskId": task_id}, timeout=15).json()
+        except Exception as e:
+            return None, f"NoCaptchaAI poll error: {e}"
+
+        if r.get("status") == "ready":
+            return r["solution"]["token"], None
+        if r.get("status") == "failed":
+            return None, f"NoCaptchaAI: {r.get('errorDescription', 'task failed')}"
+
+    return None, "NoCaptchaAI timeout"
+
+
 def get_token() -> Tuple[Optional[str], Optional[str]]:
     """
     Get a reCAPTCHA v3 token using the best available method.
     
     Priority:
-      1. CAPSOLVER_API_KEY env var -> Capsolver API (score: 0.7-0.9)
-      2. Playwright + Chromium     -> local browser (score: 0.3-0.5)
+      1. NOCAPTCHA_API_KEY env var -> NoCaptchaAI (200 free solves/day ✅)
+      2. CAPSOLVER_API_KEY env var -> Capsolver API (score: 0.7-0.9)
+      3. Playwright + Chromium     -> local browser (score: 0.3-0.5)
     """
+    nocaptcha_key = os.environ.get("NOCAPTCHA_API_KEY")
+    if nocaptcha_key:
+        return get_token_nocaptcha(nocaptcha_key)
     capsolver_key = os.environ.get("CAPSOLVER_API_KEY")
     if capsolver_key:
         return get_token_capsolver(capsolver_key)

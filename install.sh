@@ -122,10 +122,17 @@ setup_env() {
   echo ""
   info "── .env Setup ──────────────────────────────"
 
-  # Capsolver API key
+  # NoCaptchaAI API key (free tier: 200 solves/day)
+  read -rp "NoCaptchaAI API key (free at nocaptchaai.com, press Enter to skip): " nocaptcha_key
+  if [[ -n "$nocaptcha_key" ]]; then
+    echo "NOCAPTCHA_API_KEY=$nocaptcha_key" > "$env_file"
+    ok "NoCaptchaAI configured"
+  fi
+
+  # Capsolver API key (fallback)
   read -rp "Capsolver API key (press Enter to skip): " capsolver_key
   if [[ -n "$capsolver_key" ]]; then
-    echo "CAPSOLVER_API_KEY=$capsolver_key" > "$env_file"
+    echo "CAPSOLVER_API_KEY=$capsolver_key" >> "$env_file"
   fi
 
   # Chromium path
@@ -170,7 +177,8 @@ verify() {
     warn "No Chromium binary found"
   fi
 
-  echo "  ${DIM}--- playwright-termux/.env ---${NC}"
+  echo ""
+  echo "  ${DIM}Services configured:${NC}"
   while IFS= read -r line; do
     if [[ -n "$line" && ! "$line" =~ ^# ]]; then
       echo "    $line"
