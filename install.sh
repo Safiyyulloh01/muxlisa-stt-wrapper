@@ -38,25 +38,25 @@ install_system_deps() {
   if $IS_TERMUX; then
     info "Installing Termux packages..."
     pkg update -y
-    pkg install -y python nodejs chromium x11-repo 2>/dev/null || {
+    pkg install -y python nodejs chromium ffmpeg x11-repo 2>/dev/null || {
       warn "Some packages failed. Trying without x11-repo..."
-      pkg install -y python nodejs chromium
+      pkg install -y python nodejs chromium ffmpeg
     }
   elif $IS_LINUX; then
     if command -v apt &>/dev/null; then
       info "Installing Linux packages (apt)..."
       sudo apt update -y
-      sudo apt install -y python3 python3-pip python3-venv nodejs chromium-browser || {
-        sudo apt install -y python3 python3-pip nodejs chromium
+      sudo apt install -y python3 python3-pip python3-venv nodejs chromium-browser ffmpeg || {
+        sudo apt install -y python3 python3-pip nodejs chromium ffmpeg
       }
     elif command -v pacman &>/dev/null; then
       info "Installing Linux packages (pacman)..."
-      sudo pacman -Sy --noconfirm python python-pip nodejs chromium
+      sudo pacman -Sy --noconfirm python python-pip nodejs chromium ffmpeg
     elif command -v dnf &>/dev/null; then
       info "Installing Linux packages (dnf)..."
-      sudo dnf install -y python3 python3-pip nodejs chromium
+      sudo dnf install -y python3 python3-pip nodejs chromium ffmpeg
     else
-      warn "Unknown package manager. Install python3, nodejs, chromium manually."
+      warn "Unknown package manager. Install python3, nodejs, chromium, ffmpeg manually."
     fi
   fi
 }

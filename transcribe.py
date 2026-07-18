@@ -57,43 +57,50 @@ def load_audio(path: str, target_sr: int = 16000) -> Tuple[array.array, int]:
     """
     Load any audio file as mono 16-bit PCM at target_sr.
     Returns (samples_array, sample_rate).
-    Supports WAV, MP3, FLAC, OGG, M4A via pydub.
+    Supports WAV, MP3, FLAC, OGG, M4A via ffmpeg.
     """
-    import array, wave
-
     ext = Path(path).suffix.lower()
+
+    # For WAV, try direct read first (fast path)
     if ext == '.wav':
         try:
+            import wave
             with wave.open(path, 'rb') as w:
                 ch, sw, fr, nf = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
                 raw = w.readframes(nf)
-        except:
-            raw = None
-        if raw:
-            if sw == 1:
-                s = array.array('h', (int((b - 128) * 256) for b in raw[::ch]))
-            elif sw == 2:
-                arr = array.array('h'); arr.frombytes(raw[:nf * ch * 2])
-                s = array.array('h', (arr[i] for i in range(0, len(arr), ch)))
-            else:
-                raise ValueError(f"Unsupported sample width: {sw}")
-            sr = fr
-            # Resample if needed
-            if sr != target_sr:
-                ratio = target_sr / sr
-                new_len = int(len(s) * ratio)
-                rs = array.array('h', [0]) * new_len
-                for i in range(new_len):
-                    src = int(i / ratio)
-                    if src < len(s): rs[i] = s[src]
-                s = rs
-            return s, target_sr
+            if raw and sw in (1, 2):
+                if sw == 1:
+                    s = array.array('h', (int((b - 128) * 256) for b in raw[::ch]))
+                else:
+                    arr = array.array('h'); arr.frombytes(raw[:nf * ch * 2])
+                    s = array.array('h', (arr[i] for i in range(0, len(arr), ch)))
+                # Resample if needed
+                if fr != target_sr:
+                    ratio = target_sr / fr
+                    new_len = int(len(s) * ratio)
+                    rs = array.array('h', [0]) * new_len
+                    for i in range(new_len):
+                        src = int(i / ratio)
+                        if src < len(s): rs[i] = s[src]
+                    s = rs
+                return s, target_sr
+        except Exception:
+            pass  # fall through to ffmpeg
 
-    # Fallback: use pydub for non-WAV or problematic files
-    from pydub import AudioSegment
-    audio = AudioSegment.from_file(path)
-    audio = audio.set_channels(1).set_frame_rate(target_sr).set_sample_width(2)
-    s = array.array('h'); s.frombytes(audio.raw_data)
+    # Use ffmpeg for all formats (WAV fallback + non-WAV)
+    import subprocess, struct
+    cmd = ['ffmpeg', '-i', path, '-f', 's16le', '-acodec', 'pcm_s16le',
+           '-ac', '1', '-ar', str(target_sr), '-vn', '-loglevel', 'error', '-']
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=120)
+        if proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg error: {proc.stderr.decode(errors='replace')[:200]}")
+        raw = proc.stdout
+    except FileNotFoundError:
+        raise RuntimeError("ffmpeg not found. Install ffmpeg (pkg install ffmpeg / apt install ffmpeg)")
+
+    s = array.array('h')
+    s.frombytes(raw)
     return s, target_sr
 
 

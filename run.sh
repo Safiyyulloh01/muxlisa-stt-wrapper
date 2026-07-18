@@ -36,6 +36,7 @@ check_dep() {
 
 check_dep python3 || exit 1
 check_dep node || exit 1
+check_dep ffmpeg || warn "ffmpeg not found — only WAV files supported"
 
 # ── Detect Chromium ────────────────────────────────────────────
 
