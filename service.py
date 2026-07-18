@@ -95,6 +95,7 @@ def status():
             "requests_served": REQUEST_COUNT,
         },
         "recaptcha": {
+            "nopecha": bool(os.environ.get("NOPECHA_API_KEY")),
             "nocaptchaai": bool(os.environ.get("NOCAPTCHA_API_KEY")),
             "capsolver": bool(os.environ.get("CAPSOLVER_API_KEY")),
             "playwright": chromium_ok,
@@ -186,7 +187,8 @@ if __name__ == "__main__":
     print(f"  Docs:    http://{host}:{port}/docs")
     print(f"  Endpoint: POST /v1/transcribe")
     print()
-    print(f"  NoCaptchaAI: {'✅' if os.environ.get('NOCAPTCHA_API_KEY') else '❌'}  (200 free/day)")
+    print(f"  Nopecha:     {'✅' if os.environ.get('NOPECHA_API_KEY') else '❌'}  (5 free/day)")
+  print(f"  NoCaptchaAI: {'✅' if os.environ.get('NOCAPTCHA_API_KEY') else '❌'}  (200 free/day)")
   print(f"  Capsolver:   {'✅' if os.environ.get('CAPSOLVER_API_KEY') else '❌'}")
     print(f"  Playwright: {'✅' if os.path.exists(os.environ.get('CHROMIUM_PATH', '/data/data/com.termux/files/usr/bin/chromium-browser')) else '❌'}")
     print("─" * 50)

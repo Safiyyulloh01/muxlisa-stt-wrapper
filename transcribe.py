@@ -326,15 +326,76 @@ def get_token_nocaptcha(api_key: str) -> Tuple[Optional[str], Optional[str]]:
     return None, "NoCaptchaAI timeout"
 
 
+def get_token_nopecha(api_key: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Get reCAPTCHA v3 token via Nopecha Token API.
+    
+    Free tier: 100 credits/day (5 reCAPTCHA v3 solves at 20 credits each).
+    Simple REST API — submit, then poll for result.
+    Sign up at https://nopecha.com
+    """
+    # Submit
+    try:
+        r = requests.post("https://api.nopecha.com/v1/token/recaptcha3", json={
+            "key": api_key,
+            "sitekey": RECAPTCHA_SITE_KEY,
+            "url": PAGE_URL,
+            "data": {"action": "enquiryFormSubmit"},
+        }, timeout=20)
+    except Exception as e:
+        return None, f"Nopecha connection error: {e}"
+
+    try:
+        body = r.json()
+    except Exception:
+        return None, f"Nopecha bad response: {r.text[:200]}"
+
+    if "error" in body:
+        return None, f"Nopecha: {body['error']}"
+    if "data" not in body:
+        return None, f"Nopecha unexpected: {body}"
+
+    job_id = body["data"]
+
+    # Poll for result (Nopecha Token API takes ~30-60s)
+    for _ in range(60):
+        time.sleep(3)
+        try:
+            r = requests.get(
+                f"https://api.nopecha.com/v1/token/recaptcha3",
+                params={"key": api_key, "id": job_id},
+                timeout=15,
+            )
+            body = r.json()
+        except Exception as e:
+            return None, f"Nopecha poll error: {e}"
+
+        if "data" in body and body["data"]:
+            token = body["data"]
+            # Nopecha returns the token directly as a string
+            if isinstance(token, str) and len(token) > 50:
+                return token, None
+            if isinstance(token, list) and token:
+                return token[0], None
+        if "error" in body:
+            return None, f"Nopecha: {body['error']}"
+
+    return None, "Nopecha timeout"
+
+
 def get_token() -> Tuple[Optional[str], Optional[str]]:
     """
     Get a reCAPTCHA v3 token using the best available method.
     
     Priority:
-      1. NOCAPTCHA_API_KEY env var -> NoCaptchaAI (200 free solves/day ✅)
-      2. CAPSOLVER_API_KEY env var -> Capsolver API (score: 0.7-0.9)
-      3. Playwright + Chromium     -> local browser (score: 0.3-0.5)
+      1. NOPECHA_API_KEY env var -> Nopecha (5 free solves/day ✅)
+      2. NOCAPTCHA_API_KEY env var -> NoCaptchaAI (200 free solves/day)
+      3. CAPSOLVER_API_KEY env var -> Capsolver API
+      4. Playwright + Chromium     -> local browser
     """
+    nopecha_key = os.environ.get("NOPECHA_API_KEY")
+    if nopecha_key:
+        return get_token_nopecha(nopecha_key)
     nocaptcha_key = os.environ.get("NOCAPTCHA_API_KEY")
     if nocaptcha_key:
         return get_token_nocaptcha(nocaptcha_key)

@@ -122,10 +122,17 @@ setup_env() {
   echo ""
   info "── .env Setup ──────────────────────────────"
 
-  # NoCaptchaAI API key (free tier: 200 solves/day)
+  # Nopecha API key (free: 5 solves/day)
+  read -rp "Nopecha API key (free at nopecha.com, press Enter to skip): " nopecha_key
+  if [[ -n "$nopecha_key" ]]; then
+    echo "NOPECHA_API_KEY=$nopecha_key" > "$env_file"
+    ok "Nopecha configured (5 free solves/day)"
+  fi
+
+  # NoCaptchaAI API key (free: 200 solves/day)
   read -rp "NoCaptchaAI API key (free at nocaptchaai.com, press Enter to skip): " nocaptcha_key
   if [[ -n "$nocaptcha_key" ]]; then
-    echo "NOCAPTCHA_API_KEY=$nocaptcha_key" > "$env_file"
+    echo "NOCAPTCHA_API_KEY=$nocaptcha_key" >> "$env_file"
     ok "NoCaptchaAI configured"
   fi
 
