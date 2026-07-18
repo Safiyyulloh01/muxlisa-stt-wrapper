@@ -31,13 +31,16 @@ curl http://localhost:8000/v1/health     # health check
 curl http://localhost:8000/v1/status     # server status
 ```
 
-The demo accepts WAV audio, max ~10 seconds. Output:
+The demo accepts WAV audio up to ~10 seconds per chunk. Longer files are
+**automatically split at silence boundaries** (not mid-word), transcribed
+per chunk, and merged.
 
 ```json
 {
   "status": "ok",
-  "transcript": "transcribed text in Uzbek",
-  "audio_duration_sec": 3
+  "transcript": "full transcribed text...",
+  "duration_sec": 33.0,
+  "chunks": 4
 }
 ```
 
@@ -60,6 +63,28 @@ The Muxlisa frontend was reverse-engineered to extract:
 | **Auth** | `Unique-Key: MD5("b01b6852888f401689483814d4e1e6e0f68" + MD5(filename))` |
 | **Form** | `file` (WAV), `g-recaptcha-v3`, `g-recaptcha-v2` |
 | **reCAPTCHA v3 key** | `6LfrVHopAAAAALEkxrmPZsw1vRpAvcc8f1nn7EcY` |
+
+## Audio Chunking
+
+The demo API enforces ~10 seconds per request. For longer files, the engine:
+
+1. **Loads** audio via ffmpeg (WAV, MP3, FLAC, OGG, M4A) as mono 16-bit 16kHz PCM
+2. **Finds silence** by computing RMS energy with a 50ms sliding window, estimating noise floor (5th percentile), and setting a threshold at 3× noise floor
+3. **Splits near boundaries** — for each 10-second boundary, it searches ±300ms for the lowest-energy frame and cuts there, so words are never cropped
+4. **Transcribes** each chunk through the demo API
+5. **Merges** results with spaces
+
+```bash
+# Dry-run to see where splits would happen:
+python3 transcribe.py long-speech.wav --dry-run
+
+# Output:
+# Duration: 33.0s → 4 chunk(s)
+#   0.0s → 9.7s  (9.7s)
+#   9.7s → 19.4s (9.7s)
+#   19.4s → 29.5s (10.1s)
+#   29.5s → 33.0s (3.5s)
+```
 
 ## reCAPTCHA: Two Methods
 
