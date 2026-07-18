@@ -6,15 +6,18 @@ Transcribes Uzbek speech to text using Muxlisa.uz's free demo API.
 Handles reCAPTCHA token generation (Playwright or Capsolver), Unique-Key
 computation (reverse-engineered from frontend JS), and audio conversion.
 
+Supports audio of ANY length by splitting at silence boundaries into
+~10-second chunks, transcribing each, and merging the results.
+
 Usage:
   python3 transcribe.py audio.wav                        # auto (Playwright)
   CAPSOLVER_API_KEY="key" python3 transcribe.py audio.wav # higher score
   python3 transcribe.py audio.wav --token TOKEN           # manual token
 """
 
-import hashlib, io, json, os, subprocess, sys, time
+import hashlib, io, json, math, os, subprocess, sys, tempfile, time, array
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import requests
 
@@ -24,6 +27,7 @@ DEMO_SALT = "b01b6852888f401689483814d4e1e6e0f68"
 DEMO_ENDPOINT = "https://api.muxlisa.uz/v1/api/services/stt-demo/"
 RECAPTCHA_SITE_KEY = "6LfrVHopAAAAALEkxrmPZsw1vRpAvcc8f1nn7EcY"
 PAGE_URL = "https://muxlisa.uz/en"
+MAX_CHUNK_SEC = 10  # demo limit
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -49,46 +53,140 @@ def compute_unique_key(filename: str) -> str:
 
 # ── Audio Processing ───────────────────────────────────────────
 
-def convert_audio(path: str, max_sec: int = 10) -> bytes:
+def load_audio(path: str, target_sr: int = 16000) -> Tuple[array.array, int]:
     """
-    Convert any WAV file to 16-bit mono 16kHz.
-    Truncates to max_sec seconds (demo limit is ~10s).
-    Returns raw WAV bytes ready for upload.
+    Load any audio file as mono 16-bit PCM at target_sr.
+    Returns (samples_array, sample_rate).
+    Supports WAV, MP3, FLAC, OGG, M4A via pydub.
     """
-    import wave, array
-    with wave.open(path, 'rb') as w:
-        ch, sw, fr, nf = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
-        raw = w.readframes(nf)
+    import array, wave
 
-    duration = nf / fr
-    if duration > max_sec:
-        nf = int(fr * max_sec)
-        raw = raw[:nf * ch * sw]
+    ext = Path(path).suffix.lower()
+    if ext == '.wav':
+        try:
+            with wave.open(path, 'rb') as w:
+                ch, sw, fr, nf = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+                raw = w.readframes(nf)
+        except:
+            raw = None
+        if raw:
+            if sw == 1:
+                s = array.array('h', (int((b - 128) * 256) for b in raw[::ch]))
+            elif sw == 2:
+                arr = array.array('h'); arr.frombytes(raw[:nf * ch * 2])
+                s = array.array('h', (arr[i] for i in range(0, len(arr), ch)))
+            else:
+                raise ValueError(f"Unsupported sample width: {sw}")
+            sr = fr
+            # Resample if needed
+            if sr != target_sr:
+                ratio = target_sr / sr
+                new_len = int(len(s) * ratio)
+                rs = array.array('h', [0]) * new_len
+                for i in range(new_len):
+                    src = int(i / ratio)
+                    if src < len(s): rs[i] = s[src]
+                s = rs
+            return s, target_sr
 
-    # Convert to 16-bit mono
-    if sw == 1:
-        samples = array.array('h', (int((b - 128) * 256) for b in raw[::ch]))
-    elif sw == 2:
-        arr = array.array('h'); arr.frombytes(raw[:nf * ch * 2])
-        samples = array.array('h', (arr[i] for i in range(0, len(arr), ch)))
-    else:
-        raise ValueError(f"Unsupported sample width: {sw}")
+    # Fallback: use pydub for non-WAV or problematic files
+    from pydub import AudioSegment
+    audio = AudioSegment.from_file(path)
+    audio = audio.set_channels(1).set_frame_rate(target_sr).set_sample_width(2)
+    s = array.array('h'); s.frombytes(audio.raw_data)
+    return s, target_sr
 
-    # Resample to 16kHz
-    if fr != 16000:
-        ratio = 16000 / fr
-        new_len = int(len(samples) * ratio)
-        resampled = array.array('h', [0]) * new_len
-        for i in range(new_len):
-            src = int(i / ratio)
-            if src < len(samples): resampled[i] = samples[src]
-        samples = resampled
 
+def audio_to_wav_bytes(samples: array.array, sr: int = 16000) -> bytes:
+    """Convert samples array to WAV bytes."""
+    import wave
     buf = io.BytesIO()
     with wave.open(buf, 'wb') as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
         w.writeframes(samples.tobytes())
     return buf.getvalue()
+
+
+def find_split_points(samples: array.array, sr: int, max_chunk: int = MAX_CHUNK_SEC) -> List[int]:
+    """
+    Find optimal split points near max_chunk boundaries.
+    Looks for silence (low energy) closest to each boundary so speech
+    is never cut mid-word.
+    """
+    if len(samples) / sr <= max_chunk:
+        return []
+
+    chunk_frames = max_chunk * sr
+    total_frames = len(samples)
+    splits = []
+    search_window = int(0.3 * sr)  # look 300ms around boundary
+
+    # Compute per-frame energy (rectified)
+    # Use windowed RMS for smoother detection
+    window = int(0.05 * sr)  # 50ms window
+    rms = array.array('f', [0.0]) * (total_frames // window + 1)
+    for i in range(0, total_frames, window):
+        chunk = samples[i:i + window]
+        if len(chunk) == 0: break
+        sq = sum((int(s) ** 2) for s in chunk) / len(chunk)
+        rms[i // window] = math.sqrt(sq)
+
+    # Find noise floor (10th percentile)
+    sorted_rms = sorted(rms)
+    noise_floor = sorted_rms[max(0, int(len(sorted_rms) * 0.05))]
+    threshold = noise_floor * 3  # silence = below 3x noise floor
+
+    pos = chunk_frames
+    while pos < total_frames:
+        start_search = max(0, pos - search_window)
+        end_search = min(total_frames - 1, pos + search_window)
+
+        best_split = pos
+        best_energy = float('inf')
+
+        for f in range(start_search, end_search):
+            idx = f // window
+            if idx < len(rms):
+                e = rms[idx]
+                if e < best_energy:
+                    best_energy = e
+                    best_split = f
+
+        # Only split at silence points; otherwise split at exact boundary
+        if best_energy > threshold:
+            best_split = pos  # no silence found, cut at boundary
+
+        splits.append(best_split)
+        pos = best_split + chunk_frames
+
+    return splits
+
+
+def split_audio(samples: array.array, sr: int, splits: List[int]) -> List[Tuple[int, int]]:
+    """Return list of (start_frame, end_frame) for each chunk."""
+    chunks = []
+    start = 0
+    for sp in splits:
+        chunks.append((start, sp))
+        start = sp
+    if start < len(samples):
+        chunks.append((start, len(samples)))
+    return chunks
+
+
+def convert_audio(path: str, max_sec: int = MAX_CHUNK_SEC) -> bytes:
+    """
+    Load audio, convert to 16-bit mono 16kHz, and return WAV bytes.
+    If shorter than max_sec, returns full file. If longer, use split_and_transcribe.
+    (kept for backward compatibility)
+    """
+    samples, sr = load_audio(path)
+    duration = len(samples) / sr
+    if duration > max_sec:
+        # Truncate
+        n = int(sr * max_sec)
+        samples = samples[:n]
+    return audio_to_wav_bytes(samples, sr)
 
 
 # ── reCAPTCHA Token ────────────────────────────────────────────
@@ -196,78 +294,139 @@ def get_token() -> Tuple[Optional[str], Optional[str]]:
 
 # ── Main API Call ──────────────────────────────────────────────
 
+def _transcribe_chunk(wav_bytes: bytes, recaptcha_token: str,
+                       chunk_idx: int, total_chunks: int,
+                       verbose: bool) -> Optional[str]:
+    """Send a single audio chunk to the demo API and return transcript text."""
+    def log(msg):
+        if verbose: print(msg, file=sys.stderr)
+
+    ts = int(time.time() * 1000)
+    filename = f"chunk{chunk_idx}_{ts}.wav"
+    unique_key = compute_unique_key(filename)
+
+    files = {"file": (filename, io.BytesIO(wav_bytes), "audio/wav")}
+    form = {"g-recaptcha-v3": recaptcha_token, "g-recaptcha-v2": ""}
+    headers = {"Unique-Key": unique_key, "Access-Control-Allow-Origin": "*"}
+
+    dur = len(wav_bytes) / 32000
+    tag = f"[{chunk_idx + 1}/{total_chunks}]" if total_chunks > 1 else ""
+    log(f"  {tag} sending chunk ({dur:.1f}s)...")
+
+    try:
+        resp = requests.post(DEMO_ENDPOINT, headers=headers, data=form,
+                           files=files, timeout=60)
+    except Exception as e:
+        log(f"  {tag} ❌ request failed: {e}")
+        return None
+
+    if resp.status_code == 200:
+        try:
+            data = resp.json()
+            text = None
+            if isinstance(data.get("result"), dict):
+                text = data["result"].get("text")
+            elif data.get("detail"):
+                text = data["detail"]
+            if text:
+                log(f"  {tag} ✅ got {len(text)} chars")
+                return text
+        except Exception:
+            pass
+
+    log(f"  {tag} ❌ {resp.status_code}: {resp.text[:100]}")
+    return None
+
+
 def transcribe(audio_path: str, recaptcha_token: Optional[str] = None,
                dry_run: bool = False, verbose: bool = True) -> dict:
     """
     Transcribe audio file using Muxlisa free demo API.
     
+    Automatically splits audio longer than ~10s into chunks at silence
+    boundaries, transcribes each chunk, and merges the results.
+    
     Args:
-        audio_path: Path to WAV audio file (max ~10 seconds)
+        audio_path: Path to audio file (WAV, MP3, FLAC, OGG, M4A)
         recaptcha_token: reCAPTCHA v3 token (auto-fetched if None)
         dry_run: Compute Unique-Key only, don't call API
         verbose: Print progress to stderr
     
     Returns:
-        dict with keys: status_code, transcript (on success), error (on failure)
+        dict with keys: status_code, transcript (on success), 
+                        chunks (list of per-chunk results), error
     """
     def log(msg):
         if verbose: print(msg, file=sys.stderr)
 
-    # Validate input
     if not os.path.exists(audio_path):
         return {"error": f"File not found: {audio_path}", "status_code": 400}
 
-    # Get reCAPTCHA token
-    if not recaptcha_token and not dry_run:
+    # Load audio
+    samples, sr = load_audio(audio_path)
+    duration = len(samples) / sr
+    log(f"🎵 Loaded: {Path(audio_path).name} ({duration:.1f}s, {sr}Hz)")
+
+    if dry_run:
+        splits = find_split_points(samples, sr)
+        chunks = split_audio(samples, sr, splits)
+        return {
+            "status": "dry_run",
+            "duration_sec": duration,
+            "num_chunks": len(chunks),
+            "chunks": [{"start": f"{s/sr:.1f}s", "end": f"{e/sr:.1f}s",
+                        "len_sec": round((e - s) / sr, 1)}
+                       for s, e in chunks],
+        }
+
+    # Get reCAPTCHA token (reused for all chunks to save time)
+    if not recaptcha_token:
         token, err = get_token()
         if err:
             return {"error": f"reCAPTCHA failed: {err}", "status_code": 400}
         recaptcha_token = token
         log(f"✅ Token: {recaptcha_token[:30]}...")
 
-    # Convert audio + generate filename (timestamped like frontend)
-    ts = int(time.time() * 1000)
-    filename = f"{ts}.wav"
-    wav_bytes = convert_audio(audio_path, max_sec=10)
-    unique_key = compute_unique_key(filename)
-    log(f"🔑 Key: {unique_key} ({len(wav_bytes)//32000}s audio)")
+    # Find split points and create chunks
+    splits = find_split_points(samples, sr)
+    chunk_ranges = split_audio(samples, sr, splits)
+    num_chunks = len(chunk_ranges)
 
-    if dry_run:
-        return {"status": "dry_run", "unique_key": unique_key, "filename": filename}
+    if num_chunks == 1:
+        log(f"📤 Sending ({duration:.1f}s)...")
+        wav = audio_to_wav_bytes(samples, sr)
+        text = _transcribe_chunk(wav, recaptcha_token, 0, 1, verbose)
+        if text:
+            return {"status_code": 200, "transcript": text,
+                    "duration_sec": duration, "chunks": [text]}
+        return {"status_code": 502, "error": "Transcription failed"}
 
-    # Call the API
-    files = {"file": (filename, io.BytesIO(wav_bytes), "audio/wav")}
-    form = {"g-recaptcha-v3": recaptcha_token, "g-recaptcha-v2": ""}
-    headers = {"Unique-Key": unique_key, "Access-Control-Allow-Origin": "*"}
+    log(f"✂️ Splitting into {num_chunks} chunks at silence boundaries...")
+    if verbose:
+        for i, (s, e) in enumerate(chunk_ranges):
+            print(f"     chunk {i+1}: {s/sr:.1f}s → {e/sr:.1f}s ({(e-s)/sr:.1f}s)", file=sys.stderr)
 
-    try:
-        log("📤 Sending...")
-        resp = requests.post(DEMO_ENDPOINT, headers=headers, data=form, files=files, timeout=60)
-    except requests.exceptions.Timeout:
-        return {"error": "API timeout", "status_code": 504}
-    except requests.exceptions.ConnectionError as e:
-        return {"error": f"Connection error: {e}", "status_code": 502}
+    # Transcribe each chunk
+    texts = []
+    for i, (start, end) in enumerate(chunk_ranges):
+        chunk_samples = samples[start:end]
+        wav = audio_to_wav_bytes(chunk_samples, sr)
+        text = _transcribe_chunk(wav, recaptcha_token, i, num_chunks, verbose)
+        if text:
+            texts.append(text)
+        else:
+            texts.append("[error]")
 
-    # Parse response
-    try:
-        result = resp.json()
-    except Exception:
-        result = {"raw": resp.text[:500]}
+    merged = " ".join(t for t in texts if t and t != "[error]").strip()
+    log(f"\n📝 Merged ({len(merged)} chars)")
 
-    result["status_code"] = resp.status_code
-
-    if resp.status_code == 200:
-        transcript = None
-        if isinstance(result.get("result"), dict):
-            transcript = result["result"].get("text")
-        elif result.get("detail"):
-            transcript = result["detail"]
-        result["transcript"] = transcript
-        log(f"📝 {transcript}" if transcript else "⚠ No transcript in response")
-    else:
-        log(f"❌ {resp.status_code}: {result.get('error', resp.text[:200])}")
-
-    return result
+    return {
+        "status_code": 200 if merged else 502,
+        "transcript": merged or None,
+        "duration_sec": duration,
+        "chunks": texts,
+        "num_chunks": num_chunks,
+    }
 
 
 # ── CLI ────────────────────────────────────────────────────────
@@ -292,4 +451,8 @@ if __name__ == "__main__":
     elif result.get("transcript"):
         print(result["transcript"])
     elif result.get("status") == "dry_run":
-        print(f"Unique-Key: {result['unique_key']}")
+        dur = result.get("duration_sec", 0)
+        n = result.get("num_chunks", 0)
+        print(f"Duration: {dur:.1f}s → {n} chunk(s)")
+        for c in result.get("chunks", []):
+            print(f"  {c['start']} → {c['end']}  ({c['len_sec']}s)")

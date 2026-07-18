@@ -125,12 +125,13 @@ async def transcribe_route(
     audio_bytes = await audio.read()
     if not audio_bytes:
         raise HTTPException(400, "Empty audio file")
-    if len(audio_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(400, "File too large (max 10 MB)")
+    if len(audio_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 50 MB)")
 
-    # Save to temp file (transcribe() expects a path for WAV processing)
-    import tempfile
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+    # Save to temp file
+    import tempfile, os
+    suffix = Path(audio.filename or "audio.wav").suffix or ".wav"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
         f.write(audio_bytes)
         tmp_path = f.name
 
@@ -147,14 +148,14 @@ async def transcribe_route(
         return {
             "status": "ok",
             "transcript": result.get("transcript"),
-            "audio_duration_sec": len(convert_audio(tmp_path, max_sec=99999)) // 32000,
+            "duration_sec": result.get("duration_sec"),
+            "chunks": result.get("num_chunks", 1),
         }
     else:
         raise HTTPException(
             status_code=status_code,
             detail={
-                "error": result.get("error", result.get("error", "Unknown error")),
-                "detail": result.get("detail", result.get("raw", "")),
+                "error": result.get("error", "Unknown error"),
             }
         )
 
