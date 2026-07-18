@@ -1,0 +1,16 @@
+{
+  "name": "ttsdemo",
+  "version": "1.0.0",
+  "description": "Turns the [Muxlisa.uz](https://muxlisa.uz/en) STT service into your own API.",
+  "main": "chunk_1197.9a06c2e38c39587d.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright-core": "^1.54.1"
+  }
+}
