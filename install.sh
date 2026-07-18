@@ -10,11 +10,40 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; RED='\033[0;31m'; NC='\033[0m'
-info()  { echo -e "${CYAN}→${NC} $1"; }
-ok()    { echo -e "${GREEN}✓${NC} $1"; }
-warn()  { echo -e "${YELLOW}⚠${NC} $1"; }
-err()   { echo -e "${RED}✗${NC} $1"; }
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; RED='\033[0;31m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+info()  { echo -e "  ${CYAN}→${NC} $1"; }
+ok()    { echo -e "  ${GREEN}✓${NC} $1"; }
+warn()  { echo -e "  ${YELLOW}⚠${NC} $1"; }
+err()   { echo -e "  ${RED}✗${NC} $1"; }
+header() { echo -e "\n${BOLD}$1${NC}"; echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; }
+
+# ── Spinner for long-running commands ───────────────────────
+
+spin() {
+  local pid=$1 msg="$2"
+  local chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  local i=0
+  echo -n "  ${CYAN}${chars:i++%${#chars}:1}${NC} $msg "
+  while kill -0 "$pid" 2>/dev/null; do
+    echo -ne "\r  ${CYAN}${chars:i++%${#chars}:1}${NC} $msg "
+    sleep 0.1
+  done
+  wait "$pid" 2>/dev/null
+  if [[ $? -eq 0 ]]; then
+    echo -e "\r  ${GREEN}✓${NC} $msg "
+  else
+    echo -e "\r  ${RED}✗${NC} $msg "
+    return 1
+  fi
+}
+
+run_spin() {
+  local msg="$1"; shift
+  ("$@" &>/dev/null) &
+  local pid=$!
+  spin "$pid" "$msg"
+  return $?
+}
 
 # ── Detect platform ────────────────────────────────────────────
 
@@ -35,26 +64,24 @@ fi
 # ── Install system dependencies ────────────────────────────────
 
 install_system_deps() {
+  header "System Dependencies"
   if $IS_TERMUX; then
-    info "Installing Termux packages..."
-    pkg update -y
-    pkg install -y python nodejs chromium ffmpeg x11-repo 2>/dev/null || {
-      warn "Some packages failed. Trying without x11-repo..."
-      pkg install -y python nodejs chromium ffmpeg
-    }
+    run_spin "Updating package lists..." pkg update -y
+    run_spin "Installing python, nodejs..." pkg install -y python nodejs
+    run_spin "Installing chromium..." pkg install -y chromium
+    run_spin "Installing ffmpeg..." pkg install -y ffmpeg
   elif $IS_LINUX; then
     if command -v apt &>/dev/null; then
-      info "Installing Linux packages (apt)..."
-      sudo apt update -y
-      sudo apt install -y python3 python3-pip python3-venv nodejs chromium-browser ffmpeg || {
-        sudo apt install -y python3 python3-pip nodejs chromium ffmpeg
-      }
+      run_spin "Updating package lists..." sudo apt update -y
+      run_spin "Installing python3, nodejs..." sudo apt install -y python3 python3-pip python3-venv nodejs
+      run_spin "Installing chromium..." sudo apt install -y chromium-browser chromium 2>/dev/null
+      run_spin "Installing ffmpeg..." sudo apt install -y ffmpeg
     elif command -v pacman &>/dev/null; then
-      info "Installing Linux packages (pacman)..."
-      sudo pacman -Sy --noconfirm python python-pip nodejs chromium ffmpeg
+      run_spin "Installing packages..." sudo pacman -Sy --noconfirm python python-pip nodejs chromium ffmpeg
     elif command -v dnf &>/dev/null; then
-      info "Installing Linux packages (dnf)..."
-      sudo dnf install -y python3 python3-pip nodejs chromium ffmpeg
+      run_spin "Installing python3, nodejs..." sudo dnf install -y python3 python3-pip nodejs
+      run_spin "Installing chromium..." sudo dnf install -y chromium
+      run_spin "Installing ffmpeg..." sudo dnf install -y ffmpeg
     else
       warn "Unknown package manager. Install python3, nodejs, chromium, ffmpeg manually."
     fi
@@ -64,25 +91,22 @@ install_system_deps() {
 # ── Install Python deps ────────────────────────────────────────
 
 install_python_deps() {
-  info "Installing Python dependencies..."
-  pip install -r requirements.txt 2>/dev/null || pip3 install -r requirements.txt
-  ok "Python deps installed"
+  header "Python Dependencies"
+  run_spin "Installing Python packages (fastapi, uvicorn, requests)..." \
+    pip install -r requirements.txt 2>/dev/null || pip3 install -r requirements.txt
 }
 
 # ── Install Node deps ──────────────────────────────────────────
 
 install_node_deps() {
-  info "Installing Node.js dependencies..."
+  header "Node.js Dependencies"
   cd "$SCRIPT_DIR/playwright-termux"
-  
   if $IS_TERMUX; then
-    npm install playwright-core@1.54.1 dotenv 2>/dev/null
+    run_spin "Installing playwright-core (Termux-compatible)..." npm install playwright-core@1.54.1 dotenv
   else
-    npm install playwright dotenv 2>/dev/null
+    run_spin "Installing playwright..." npm install playwright dotenv
   fi
-  
   cd "$SCRIPT_DIR"
-  ok "Node.js deps installed"
 }
 
 # ── Setup .env ─────────────────────────────────────────────────
@@ -146,7 +170,13 @@ verify() {
     warn "No Chromium binary found"
   fi
 
-  cat "$SCRIPT_DIR/playwright-termux/.env" 2>/dev/null | grep -v '^$' | grep -v '^#' | head -5
+  echo "  ${DIM}--- playwright-termux/.env ---${NC}"
+  while IFS= read -r line; do
+    if [[ -n "$line" && ! "$line" =~ ^# ]]; then
+      echo "    $line"
+    fi
+  done < "$SCRIPT_DIR/playwright-termux/.env" 2>/dev/null
+  echo
 }
 
 # ── Main ───────────────────────────────────────────────────────
