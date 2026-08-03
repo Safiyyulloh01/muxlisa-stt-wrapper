@@ -53,6 +53,54 @@ python3 transcribe.py speech.wav --dry-run    # test Unique-Key generation
 python3 transcribe.py speech.wav --json       # full JSON output
 ```
 
+## Browser Warming (important for reCAPTCHA scores)
+
+Google scores reCAPTCHA by how "familiar" your browser + IP look. A
+fresh headless browser scores ~0.1-0.3 (rejected by the demo). Warming
+it up gets scores that pass.
+
+### 1. Persistent profile
+
+The browser keeps its profile at `~/.muxlisa-profile` between runs —
+cookies, history, and localStorage accumulate, so each session is more
+familiar than the last. Nothing to do; it just works.
+
+### 2. Warm up the profile
+
+```bash
+cd playwright-termux
+node warmup.js 5    # browses muxlisa.uz like a human for 5 minutes
+```
+
+Run it a few times before transcribing (or leave it looping). Random
+scroll, mouse movement, and delays make it look like a real visitor.
+
+### 3. Export cookies from your real browser (biggest boost)
+
+1. Open **muxlisa.uz** in your phone's/desktop's Chrome
+2. Browse around, read the demo, scroll for a minute
+3. Export cookies (DevTools → Application → Cookies, or an extension)
+4. Save them to `~/.muxlisa-cookies.json`:
+
+```json
+[
+  {"name": "NID", "value": "...", "domain": ".google.com"},
+  {"name": "_ga", "value": "...", "domain": ".muxlisa.uz"}
+]
+```
+
+The automation injects them before loading the page — Google sees the
+same session that was already browsing, and the score jumps.
+
+### 4. Token server (fast tokens)
+
+`run.sh` auto-starts a persistent token daemon (`token_server.js`) that
+keeps the warmed browser open. Instead of launching Chromium (~15-20s)
+per request, each transcription gets a **fresh** reCAPTCHA token in
+~2s. Tokens are single-use, so a new one is fetched every request.
+
+Manual start: `cd playwright-termux && node token_server.js`
+
 ## How It Works
 
 The Muxlisa frontend was reverse-engineered to extract:
