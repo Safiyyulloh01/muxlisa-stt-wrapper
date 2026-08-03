@@ -83,8 +83,11 @@ install_system_deps() {
     need_cmd python && missing+=(python)
     need_cmd node && missing+=(nodejs)
     need_cmd ffmpeg && missing+=(ffmpeg)
-    need_cmd chromium-browser && missing+=(chromium)
-    need_cmd chromium && missing+=(chromium)
+    # Chromium: Termux provides "chromium-browser", Linux usually "chromium".
+    # Only report missing if NEITHER binary exists.
+    if need_cmd chromium-browser && need_cmd chromium; then
+      missing+=(chromium)
+    fi
 
     if [[ ${#missing[@]} -eq 0 ]]; then
       ok "All system packages already installed (python, nodejs, chromium, ffmpeg)"
@@ -104,8 +107,9 @@ install_system_deps() {
     need_cmd python3 && missing+=(python3 python3-pip python3-venv)
     need_cmd node && missing+=(nodejs)
     need_cmd ffmpeg && missing+=(ffmpeg)
-    need_cmd chromium-browser && missing+=(chromium-browser)
-    need_cmd chromium && missing+=(chromium)
+    if need_cmd chromium-browser && need_cmd chromium; then
+      missing+=(chromium)
+    fi
 
     if [[ ${#missing[@]} -eq 0 ]]; then
       ok "All system packages already installed (python3, nodejs, chromium, ffmpeg)"
