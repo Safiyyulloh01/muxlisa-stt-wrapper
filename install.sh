@@ -216,7 +216,7 @@ setup_env() {
 
   if [[ "$has_solver" == true ]]; then
     ok "Captcha solver already configured — skipping setup"
-  elif [[ -t 0 ]] && command -v tput &>/dev/null; then
+  elif [[ -t 0 ]]; then
     header "Captcha Solver Setup"
     info "Choose a provider (↑/↓ arrows, Enter to select)..."
     "$SCRIPT_DIR/setup_captcha.sh"
