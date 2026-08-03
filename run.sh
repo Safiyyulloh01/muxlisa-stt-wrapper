@@ -71,6 +71,41 @@ if ! python3 -c "import fastapi" 2>/dev/null; then
   pip install -r requirements.txt 2>/dev/null || pip3 install -r requirements.txt
 fi
 
+# ── Start token server (persistent warmed browser) ─────────────
+
+TOKEN_PORT="${TOKEN_SERVER_PORT:-9520}"
+TOKEN_PID_FILE="$SCRIPT_DIR/playwright-termux/.token-server.pid"
+
+# Kill stale token server
+if [[ -f "$TOKEN_PID_FILE" ]]; then
+  OLD_PID=$(cat "$TOKEN_PID_FILE" 2>/dev/null)
+  kill "$OLD_PID" 2>/dev/null || true
+  rm -f "$TOKEN_PID_FILE"
+fi
+
+# Start the daemon when Chromium is available (helps all providers,
+# and is required for fast Playwright tokens)
+if [[ -n "$CHROMIUM" ]]; then
+  if curl -s "http://127.0.0.1:$TOKEN_PORT/health" &>/dev/null; then
+    ok "Token server already running on :$TOKEN_PORT"
+  else
+    info "Starting token server (warmed browser)..."
+    cd "$SCRIPT_DIR/playwright-termux"
+    nohup node token_server.js "$TOKEN_PORT" >/dev/null 2>&1 &
+    echo $! > "$TOKEN_PID_FILE"
+    cd "$SCRIPT_DIR"
+
+    # Wait for it to be ready (browser launch takes ~10-20s)
+    for i in $(seq 1 30); do
+      if curl -s "http://127.0.0.1:$TOKEN_PORT/health" &>/dev/null; then
+        ok "Token server ready on :$TOKEN_PORT"
+        break
+      fi
+      sleep 1
+    done
+  fi
+fi
+
 # ── Start service ──────────────────────────────────────────────
 
 PORT="${PORT:-8000}"

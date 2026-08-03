@@ -211,15 +211,42 @@ def _load_env() -> dict:
     return env
 
 
+# ── reCAPTCHA tokens are SINGLE-USE (Google rejects reuse with
+#    "timeout-or-duplicate"). No caching — always fetch fresh.
+#    Speed comes from the persistent token_server.js daemon (~2s/token).
+
+
+def get_token_from_server() -> Tuple[Optional[str], Optional[str]]:
+    """Fetch a fresh token from the persistent token_server.js daemon."""
+    port = os.environ.get("TOKEN_SERVER_PORT", "9520")
+    try:
+        r = requests.get(f"http://127.0.0.1:{port}/token", timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("token"):
+                return data["token"], None
+            return None, f"token server: {data.get('error', 'no token')}"
+        return None, f"token server HTTP {r.status_code}"
+    except requests.exceptions.ConnectionError:
+        return None, None  # daemon not running — not an error
+    except Exception as e:
+        return None, f"token server error: {e}"
+
+
 def get_token_playwright() -> Tuple[Optional[str], Optional[str]]:
     """
-    Get reCAPTCHA v3 token via Playwright + Chromium.
-    
-    Launches headless Chromium, navigates to Muxlisa, injects the
-    reCAPTCHA API, executes grecaptcha.execute(), and returns the token.
+    Get reCAPTCHA v3 token. Uses the persistent token server if running
+    (fast, ~1-2s), otherwise falls back to one-shot get_token.js.
     
     Returns: (token, error_message)
     """
+    # Fast path: token daemon
+    token, err = get_token_from_server()
+    if token:
+        return token, None
+    if err:
+        return None, err
+
     env = _load_env()
     chromium_path = env.get("CHROMIUM_PATH") or os.environ.get("CHROMIUM_PATH") or CHROMIUM_DEFAULT
 
@@ -512,7 +539,7 @@ def get_token() -> Tuple[Optional[str], Optional[str]]:
         if forced not in providers:
             return None, f"Unknown CAPTCHA_PROVIDER: {forced} (choose from {', '.join(providers)})"
         if forced == "playwright":
-            return get_token_playwright()
+            return get_token_playwright()  # daemon-aware, fresh token
         key = os.environ.get(keys[forced])
         if not key:
             print(f"⚠ CAPTCHA_PROVIDER={forced} but {keys[forced]} not set — falling back",
@@ -574,9 +601,8 @@ def _transcribe_chunk(wav_bytes: bytes, recaptcha_token: str,
                 text = data["result"].get("text")
             elif data.get("detail"):
                 text = data["detail"]
-            if text:
-                log(f"  {tag} ✅ got {len(text)} chars")
-                return text
+            # 200 with empty text = success with no speech detected
+            return text if text is not None else ""
         except Exception:
             pass
 
@@ -625,7 +651,7 @@ def transcribe(audio_path: str, recaptcha_token: Optional[str] = None,
                        for s, e in chunks],
         }
 
-    # Get reCAPTCHA token (reused for all chunks to save time)
+    # Get reCAPTCHA token (reused for all chunks; cached across calls)
     if not recaptcha_token:
         token, err = get_token()
         if err:
@@ -642,9 +668,9 @@ def transcribe(audio_path: str, recaptcha_token: Optional[str] = None,
         log(f"📤 Sending ({duration:.1f}s)...")
         wav = audio_to_wav_bytes(samples, sr)
         text = _transcribe_chunk(wav, recaptcha_token, 0, 1, verbose)
-        if text:
+        if text is not None:  # 200 with empty text = success, no speech
             return {"status_code": 200, "transcript": text,
-                    "duration_sec": duration, "chunks": [text]}
+                    "duration_sec": duration, "chunks": [text] if text else []}
         return {"status_code": 502, "error": "Transcription failed"}
 
     log(f"✂️ Splitting into {num_chunks} chunks at silence boundaries...")
