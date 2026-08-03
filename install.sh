@@ -63,27 +63,51 @@ fi
 
 # ── Install system dependencies ────────────────────────────────
 
+need_cmd() { ! command -v "$1" &>/dev/null; }
+
 install_system_deps() {
   header "System Dependencies"
   if $IS_TERMUX; then
+    local missing=()
+    need_cmd python && missing+=(python)
+    need_cmd node && missing+=(nodejs)
+    need_cmd ffmpeg && missing+=(ffmpeg)
+    need_cmd chromium-browser && missing+=(chromium)
+    need_cmd chromium && missing+=(chromium)
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+      ok "All system packages already installed (python, nodejs, chromium, ffmpeg)"
+      return
+    fi
+
+    info "Missing: ${missing[*]}"
     run_spin "Updating package lists..." pkg update -y
-    run_spin "Installing python, nodejs..." pkg install -y python nodejs
-    run_spin "Installing chromium..." pkg install -y chromium
-    run_spin "Installing ffmpeg..." pkg install -y ffmpeg
+    run_spin "Installing ${missing[*]}..." pkg install -y "${missing[@]}"
+
   elif $IS_LINUX; then
+    local missing=()
+    need_cmd python3 && missing+=(python3 python3-pip python3-venv)
+    need_cmd node && missing+=(nodejs)
+    need_cmd ffmpeg && missing+=(ffmpeg)
+    need_cmd chromium-browser && missing+=(chromium-browser)
+    need_cmd chromium && missing+=(chromium)
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+      ok "All system packages already installed (python3, nodejs, chromium, ffmpeg)"
+      return
+    fi
+
+    info "Missing: ${missing[*]}"
     if command -v apt &>/dev/null; then
       run_spin "Updating package lists..." sudo apt update -y
-      run_spin "Installing python3, nodejs..." sudo apt install -y python3 python3-pip python3-venv nodejs
-      run_spin "Installing chromium..." sudo apt install -y chromium-browser chromium 2>/dev/null
-      run_spin "Installing ffmpeg..." sudo apt install -y ffmpeg
+      run_spin "Installing ${missing[*]}..." sudo apt install -y "${missing[@]}" 2>/dev/null || \
+        run_spin "Retrying without chromium-browser..." sudo apt install -y "${missing[@]//chromium-browser/}"
     elif command -v pacman &>/dev/null; then
-      run_spin "Installing packages..." sudo pacman -Sy --noconfirm python python-pip nodejs chromium ffmpeg
+      run_spin "Installing ${missing[*]}..." sudo pacman -Sy --noconfirm "${missing[@]}"
     elif command -v dnf &>/dev/null; then
-      run_spin "Installing python3, nodejs..." sudo dnf install -y python3 python3-pip nodejs
-      run_spin "Installing chromium..." sudo dnf install -y chromium
-      run_spin "Installing ffmpeg..." sudo dnf install -y ffmpeg
+      run_spin "Installing ${missing[*]}..." sudo dnf install -y "${missing[@]}"
     else
-      warn "Unknown package manager. Install python3, nodejs, chromium, ffmpeg manually."
+      warn "Unknown package manager. Install manually: ${missing[*]}"
     fi
   fi
 }
@@ -92,6 +116,10 @@ install_system_deps() {
 
 install_python_deps() {
   header "Python Dependencies"
+  if python3 -c "import fastapi, requests, uvicorn" 2>/dev/null; then
+    ok "Python deps already installed"
+    return
+  fi
   run_spin "Installing Python packages (fastapi, uvicorn, requests)..." \
     pip install -r requirements.txt 2>/dev/null || pip3 install -r requirements.txt
 }
@@ -101,6 +129,11 @@ install_python_deps() {
 install_node_deps() {
   header "Node.js Dependencies"
   cd "$SCRIPT_DIR/playwright-termux"
+  if [[ -d node_modules/playwright-core ]] || [[ -d node_modules/playwright ]]; then
+    ok "Node deps already installed"
+    cd "$SCRIPT_DIR"
+    return
+  fi
   if $IS_TERMUX; then
     run_spin "Installing playwright-core (Termux-compatible)..." npm install playwright-core@1.54.1 dotenv
   else
@@ -148,7 +181,18 @@ setup_env() {
   mv "$tmp_env" "$env_file"
 
   # ── Interactive captcha solver selection ────────────────────
-  if [[ -t 0 ]] && command -v tput &>/dev/null; then
+  # Skip if a solver key is already configured
+  local has_solver=false
+  for v in NOPECHA_API_KEY NOCAPTCHA_API_KEY CAPSOLVER_API_KEY CAPTCHAAI_API_KEY TWOCAPTCHA_API_KEY; do
+    if grep -q "^${v}=" "$env_file" 2>/dev/null; then
+      has_solver=true
+      break
+    fi
+  done
+
+  if [[ "$has_solver" == true ]]; then
+    ok "Captcha solver already configured — skipping setup"
+  elif [[ -t 0 ]] && command -v tput &>/dev/null; then
     header "Captcha Solver Setup"
     info "Choose a provider (↑/↓ arrows, Enter to select)..."
     "$SCRIPT_DIR/setup_captcha.sh"
