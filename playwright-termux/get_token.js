@@ -24,6 +24,8 @@ const { chromium } = require('playwright-core');
 const SITE_KEY   = process.argv[2] || '6LfrVHopAAAAALEkxrmPZsw1vRpAvcc8f1nn7EcY';
 const ACTION     = process.argv[3] || 'enquiryFormSubmit';
 const TARGET_URL = 'https://muxlisa.uz/en';
+const PROFILE_DIR = process.env.PROFILE_DIR || (process.env.HOME + '/.muxlisa-profile');
+const COOKIES_FILE = process.env.COOKIES_FILE || (process.env.HOME + '/.muxlisa-cookies.json');
 
 // ── User-Agent pool ──────────────────────────────────────────
 
@@ -158,10 +160,32 @@ if (screen.orientation) {
 
 
 (async () => {
-  const browser = await chromium.launch({
+  const fs = require('fs');
+
+  // Ensure profile dir exists (persists cookies/history between runs)
+  if (!fs.existsSync(PROFILE_DIR)) fs.mkdirSync(PROFILE_DIR, { recursive: true });
+
+  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
     executablePath: process.env.CHROMIUM_PATH,
     headless: true,
     timeout: 60000,
+    viewport: { width: 1920, height: 1080 },
+    userAgent: UA,
+    locale: 'en-US',
+    timezoneId: 'Asia/Tashkent',
+    geolocation: { latitude: 41.2995, longitude: 69.2401 },
+    permissions: ['geolocation', 'notifications'],
+    colorScheme: 'light',
+    reducedMotion: 'no-preference',
+    deviceScaleFactor: 1,
+    hasTouch: false,
+    isMobile: false,
+    extraHTTPHeaders: {
+      'Accept-Language': 'en-US,en;q=0.9',
+      'sec-ch-ua': '"Chromium";v="149", "Not A(Brand";v="24", "Google Chrome";v="149"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': `"${UA_PLATFORM_NAME}"`,
+    },
     args: [
       '--headless=new',
       '--no-sandbox',
@@ -181,26 +205,6 @@ if (screen.orientation) {
       '--use-gl=angle',
       '--use-angle=swiftshader',
     ],
-  });
-
-  const context = await browser.newContext({
-    viewport: { width: 1920, height: 1080 },
-    userAgent: UA,
-    locale: 'en-US',
-    timezoneId: 'Asia/Tashkent',
-    geolocation: { latitude: 41.2995, longitude: 69.2401 },
-    permissions: ['geolocation', 'notifications'],
-    colorScheme: 'light',
-    reducedMotion: 'no-preference',
-    deviceScaleFactor: 1,
-    hasTouch: false,
-    isMobile: false,
-    extraHTTPHeaders: {
-      'Accept-Language': 'en-US,en;q=0.9',
-      'sec-ch-ua': '"Chromium";v="149", "Not A(Brand";v="24", "Google Chrome";v="149"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': `"${UA_PLATFORM_NAME}"`,
-    },
   });
 
   const page = await context.newPage();
@@ -228,6 +232,23 @@ if (screen.orientation) {
     positionX: 0, positionY: 0,
     screenOrientation: { type: 'landscapePrimary', angle: 0 },
   });
+
+  // ── Inject real-browser cookies (warmed session) if provided ──
+  // Format: [{ name, value, domain, path }] — export from your real browser
+  try {
+    if (fs.existsSync(COOKIES_FILE)) {
+      const cookies = JSON.parse(fs.readFileSync(COOKIES_FILE, 'utf8'));
+      if (Array.isArray(cookies) && cookies.length) {
+        await context.addCookies(cookies.map(c => ({
+          name: c.name, value: c.value, domain: c.domain || 'muxlisa.uz',
+          path: c.path || '/',
+        })));
+        console.error(`✓ Injected ${cookies.length} cookies from real browser`);
+      }
+    }
+  } catch (e) {
+    console.error(`⚠ Cookie injection failed: ${e.message}`);
+  }
 
   // Navigate
   await page.goto(TARGET_URL, { waitUntil: 'load', timeout: 30000 });
@@ -299,7 +320,7 @@ if (screen.orientation) {
   }, { key: SITE_KEY, action: ACTION });
 
   console.log(token);
-  await browser.close();
+  await context.close();
 })().catch(err => {
   console.error('ERROR:', err.message);
   process.exit(1);

@@ -193,9 +193,11 @@ setup_env() {
   else
     > "$tmp_env"
   fi
-  grep -v "^CHROMIUM_PATH=\|^PLAYWRIGHT_BROWSERS_PATH=" "$tmp_env" > "${tmp_env}.2" 2>/dev/null || true
+  grep -v "^CHROMIUM_PATH=\|^PLAYWRIGHT_BROWSERS_PATH=\|^PROFILE_DIR=\|^COOKIES_FILE=" "$tmp_env" > "${tmp_env}.2" 2>/dev/null || true
   mv "${tmp_env}.2" "$tmp_env"
   echo "PLAYWRIGHT_BROWSERS_PATH=0" >> "$tmp_env"
+  echo "PROFILE_DIR=$HOME/.muxlisa-profile" >> "$tmp_env"
+  echo "COOKIES_FILE=$HOME/.muxlisa-cookies.json" >> "$tmp_env"
   if [[ -n "$chromium_path" ]]; then
     echo "CHROMIUM_PATH=$chromium_path" >> "$tmp_env"
     ok "Chromium: $chromium_path"
@@ -203,6 +205,9 @@ setup_env() {
     warn "Chromium not found. Set CHROMIUM_PATH in .env"
   fi
   mv "$tmp_env" "$env_file"
+
+  info "Browser profile: $HOME/.muxlisa-profile (persists cookies between runs)"
+  info "Warm up the profile: cd playwright-termux && node warmup.js 5"
 
   # ── Interactive captcha solver selection ────────────────────
   # Skip if a solver key is already configured
