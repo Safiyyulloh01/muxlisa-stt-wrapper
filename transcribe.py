@@ -430,17 +430,95 @@ def get_token_captchaai(api_key: str) -> Tuple[Optional[str], Optional[str]]:
     return None, "CaptchaAI timeout"
 
 
+def get_token_2captcha(api_key: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Get reCAPTCHA v3 token via 2Captcha.
+    
+    Classic paid solver (~$1-3/1000 solves). reCAPTCHA v3 supported
+    with min_score parameter. Sign up at https://2captcha.com
+    """
+    try:
+        r = requests.post("https://2captcha.com/in.php", data={
+            "key": api_key,
+            "method": "userrecaptcha",
+            "version": "v3",
+            "action": "enquiryFormSubmit",
+            "min_score": 0.3,
+            "googlekey": RECAPTCHA_SITE_KEY,
+            "pageurl": PAGE_URL,
+            "json": 1,
+        }, timeout=20)
+        body = r.json()
+    except Exception as e:
+        return None, f"2Captcha connection error: {e}"
+
+    if body.get("status") != 1:
+        return None, f"2Captcha: {body.get('request', body)}"
+
+    task_id = body["request"]
+
+    # Poll for result
+    for _ in range(120):
+        time.sleep(5)
+        try:
+            r = requests.get("https://2captcha.com/res.php", params={
+                "key": api_key, "action": "get", "id": task_id, "json": 1,
+            }, timeout=15)
+            body = r.json()
+        except Exception as e:
+            return None, f"2Captcha poll error: {e}"
+
+        if body.get("status") == 1:
+            return body["request"], None
+        if body.get("request") != "CAPCHA_NOT_READY":
+            return None, f"2Captcha: {body.get('request', body)}"
+
+    return None, "2Captcha timeout"
+
+
 def get_token() -> Tuple[Optional[str], Optional[str]]:
     """
     Get a reCAPTCHA v3 token using the best available method.
     
-    Priority:
+    To force a specific provider, set CAPTCHA_PROVIDER env var:
+      CAPTCHA_PROVIDER=nopecha | nocaptchaai | captchaai | capsolver | playwright
+    
+    Default priority (if CAPTCHA_PROVIDER unset):
       1. NOPECHA_API_KEY    -> Nopecha (5 free solves/day ✅)
       2. NOCAPTCHA_API_KEY  -> NoCaptchaAI (200 free solves/day)
       3. CAPTCHAAI_API_KEY  -> CaptchaAI (paid, ~$15/mo)
       4. CAPSOLVER_API_KEY  -> Capsolver API
       5. Playwright+Chromium -> local browser
     """
+    providers = {
+        "nopecha":     lambda k: get_token_nopecha(k),
+        "nocaptchaai": lambda k: get_token_nocaptcha(k),
+        "captchaai":   lambda k: get_token_captchaai(k),
+        "capsolver":   lambda k: get_token_capsolver(k),
+        "twocaptcha":  lambda k: get_token_2captcha(k),
+        "playwright":  lambda k: get_token_playwright(),
+    }
+    keys = {
+        "nopecha":     "NOPECHA_API_KEY",
+        "nocaptchaai": "NOCAPTCHA_API_KEY",
+        "captchaai":   "CAPTCHAAI_API_KEY",
+        "capsolver":   "CAPSOLVER_API_KEY",
+        "twocaptcha":  "TWOCAPTCHA_API_KEY",
+        "playwright":  None,  # no key needed
+    }
+
+    forced = os.environ.get("CAPTCHA_PROVIDER", "").strip().lower()
+    if forced:
+        if forced not in providers:
+            return None, f"Unknown CAPTCHA_PROVIDER: {forced} (choose from {', '.join(providers)})"
+        if forced == "playwright":
+            return get_token_playwright()
+        key = os.environ.get(keys[forced])
+        if not key:
+            return None, f"CAPTCHA_PROVIDER={forced} but {keys[forced]} not set"
+        return providers[forced](key)
+
+    # Default priority
     nopecha_key = os.environ.get("NOPECHA_API_KEY")
     if nopecha_key:
         return get_token_nopecha(nopecha_key)

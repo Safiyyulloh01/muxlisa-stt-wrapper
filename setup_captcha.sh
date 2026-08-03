@@ -14,15 +14,15 @@ GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'
 RED='\033[0;31m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 REV='\033[7m'
 
-# ── Provider definitions: name|env_var|description|signup_url|cost ──
+# ── Provider definitions: name|env_var|provider_id|description|signup_url|cost ──
 
 PROVIDERS=(
-  "Nopecha|NOPECHA_API_KEY|Free: 100 credits/day = 5 reCAPTCHA v3 solves daily. Sign in with GitHub and click 'Free GitHub Key'.|https://nopecha.com/manage|FREE"
-  "NoCaptchaAI|NOCAPTCHA_API_KEY|AI-powered solver, claims 200 free solves/day. Sign up at nocaptchaai.com. May need plan activation in dashboard.|https://nocaptchaai.com|FREE"
-  "Capsolver|CAPSOLVER_API_KEY|Reliable paid solver, scores 0.7-0.9, ~\$0.002/solve. No free tier.|https://capsolver.com|PAID"
-  "CaptchaAI|CAPTCHAAI_API_KEY|Paid solver from ~\$15/mo, 2Captcha-compatible in.php/res.php API. Free trial via support ticket.|https://captchaai.com|PAID"
-  "2Captcha|TWOCAPTCHA_API_KEY|Classic paid solver, ~\$1-3/1000 solves. Supports reCAPTCHA v3 with min_score parameter.|https://2captcha.com|PAID"
-  "Playwright|NONE|Local Chromium browser, no key needed. Scores ~0.3 on Termux, 0.5+ on Linux. Automatic fallback when no key set.|local browser|FREE"
+  "Nopecha|NOPECHA_API_KEY|nopecha|Free: 100 credits/day = 5 reCAPTCHA v3 solves daily. Sign in with GitHub and click 'Free GitHub Key'.|https://nopecha.com/manage|FREE"
+  "NoCaptchaAI|NOCAPTCHA_API_KEY|nocaptchaai|AI-powered solver, claims 200 free solves/day. Sign up at nocaptchaai.com. May need plan activation in dashboard.|https://nocaptchaai.com|FREE"
+  "Capsolver|CAPSOLVER_API_KEY|capsolver|Reliable paid solver, scores 0.7-0.9, ~\$0.002/solve. No free tier.|https://capsolver.com|PAID"
+  "CaptchaAI|CAPTCHAAI_API_KEY|captchaai|Paid solver from ~\$15/mo, 2Captcha-compatible in.php/res.php API. Free trial via support ticket.|https://captchaai.com|PAID"
+  "2Captcha|TWOCAPTCHA_API_KEY|twocaptcha|Classic paid solver, ~\$1-3/1000 solves. Supports reCAPTCHA v3 with min_score parameter.|https://2captcha.com|PAID"
+  "Playwright|NONE|playwright|Local Chromium browser, no key needed. Scores ~0.3 on Termux, 0.5+ on Linux. Automatic fallback when no key set.|local browser|FREE"
 )
 
 NUM_PROVIDERS=${#PROVIDERS[@]}
@@ -46,7 +46,7 @@ render_menu() {
 
   # Provider list
   for i in "${!PROVIDERS[@]}"; do
-    IFS='|' read -r name env_var desc url cost <<< "${PROVIDERS[$i]}"
+    IFS='|' read -r name env_var provider_id desc url cost <<< "${PROVIDERS[$i]}"
     local marker
     if [[ -f "$ENV_FILE" ]] && grep -q "^${env_var}=" "$ENV_FILE" 2>/dev/null; then
       marker="${GREEN}●${NC}"  # configured
@@ -62,7 +62,7 @@ render_menu() {
   done
 
   # Description panel
-  IFS='|' read -r name env_var desc url cost <<< "${PROVIDERS[$sel]}"
+  IFS='|' read -r name env_var provider_id desc url cost <<< "${PROVIDERS[$sel]}"
   printf "\n${DIM}┌────────────────────────────────────────────────────────────┐${NC}\n"
   printf "${DIM}│${NC} ${BOLD}${name}${NC}\n"
   printf "${DIM}│${NC} ${desc}\n"
@@ -109,8 +109,9 @@ read_api_key() {
           return 1
         elif [[ "$choice" == "" || "$choice" == $'\r' || "$choice" == $'\n' ]]; then
           printf "\n"
-          save_key "$env_var" "$key"
+          save_key "$env_var" "$key" "$provider_id"
           printf "\n  ${GREEN}✓ Key saved for ${name}${NC}\n"
+          printf "  ${DIM}Set as default provider (CAPTCHA_PROVIDER)${NC}\n"
           sleep 1
           return 0  # confirmed & saved
         elif [[ "$choice" == "b" || "$choice" == "B" ]]; then
@@ -124,15 +125,16 @@ read_api_key() {
 # ── Save key to .env ───────────────────────────────────────────
 
 save_key() {
-  local env_var=$1 key=$2
+  local env_var=$1 key=$2 provider=$3
   mkdir -p "$(dirname "$ENV_FILE")"
 
   if [[ -f "$ENV_FILE" ]]; then
-    grep -v "^${env_var}=" "$ENV_FILE" > "$ENV_FILE.tmp" 2>/dev/null || true
+    grep -v "^${env_var}=\|^CAPTCHA_PROVIDER=" "$ENV_FILE" > "$ENV_FILE.tmp" 2>/dev/null || true
     mv "$ENV_FILE.tmp" "$ENV_FILE"
   fi
 
   echo "${env_var}=${key}" >> "$ENV_FILE"
+  echo "CAPTCHA_PROVIDER=${provider}" >> "$ENV_FILE"
 }
 
 # ── Main loop ──────────────────────────────────────────────────
@@ -155,18 +157,29 @@ main_menu() {
         '[B') ((sel++)); [[ $sel -ge $NUM_PROVIDERS ]] && sel=0 ;;
       esac
     elif [[ "$key" == "" || "$key" == $'\r' || "$key" == $'\n' ]]; then
-      IFS='|' read -r name env_var desc url cost <<< "${PROVIDERS[$sel]}"
+      IFS='|' read -r name env_var provider_id desc url cost <<< "${PROVIDERS[$sel]}"
 
       if [[ "$env_var" == "NONE" ]]; then
         # Playwright — no key needed
         clear_screen
         printf "${GREEN}✓${NC} Playwright selected — no API key needed.\n"
         printf "   Uses local Chromium for reCAPTCHA generation.\n\n"
-        printf "  ${DIM}(Enter) done   (Esc) back${NC}\n  "
+        printf "  ${DIM}(Enter) set as default   (Esc) back${NC}\n  "
         while true; do
           IFS= read -rsn1 c
           [[ "$c" == $'\e' ]] && break
-          [[ "$c" == "" || "$c" == $'\r' || "$c" == $'\n' ]] && { running=0; break; }
+          [[ "$c" == "" || "$c" == $'\r' || "$c" == $'\n' ]] && {
+            # Set Playwright as default provider
+            mkdir -p "$(dirname "$ENV_FILE")"
+            if [[ -f "$ENV_FILE" ]]; then
+              grep -v "^CAPTCHA_PROVIDER=" "$ENV_FILE" > "$ENV_FILE.tmp" 2>/dev/null || true
+              mv "$ENV_FILE.tmp" "$ENV_FILE"
+            fi
+            echo "CAPTCHA_PROVIDER=playwright" >> "$ENV_FILE"
+            printf "\n  ${GREEN}✓ Playwright set as default provider${NC}\n"
+            sleep 1
+            running=0; break
+          }
         done
         continue
       fi
