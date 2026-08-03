@@ -20,29 +20,39 @@ header() { echo -e "\n${BOLD}$1${NC}"; echo -e "${DIM}━━━━━━━━�
 # ── Spinner for long-running commands ───────────────────────
 
 spin() {
-  local pid=$1 msg="$2"
+  local pid=$1 msg=$2
   local chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
   local i=0
-  echo -n "  ${CYAN}${chars:i++%${#chars}:1}${NC} $msg "
+  printf '  %s %s' "${CYAN}⠋${NC}" "$msg"
   while kill -0 "$pid" 2>/dev/null; do
-    echo -ne "\r  ${CYAN}${chars:i++%${#chars}:1}${NC} $msg "
+    printf '\033[2K\r  %s %s' "${CYAN}${chars:i%${#chars}:1}${NC}" "$msg"
+    i=$((i + 1))
     sleep 0.1
   done
   wait "$pid" 2>/dev/null
-  if [[ $? -eq 0 ]]; then
-    echo -e "\r  ${GREEN}✓${NC} $msg "
+  local rc=$?
+  if [[ $rc -eq 0 ]]; then
+    printf '\033[2K\r  %s %s\n' "${GREEN}✓${NC}" "$msg"
   else
-    echo -e "\r  ${RED}✗${NC} $msg "
-    return 1
+    printf '\033[2K\r  %s %s\n' "${RED}✗${NC}" "$msg"
   fi
+  return $rc
 }
 
 run_spin() {
-  local msg="$1"; shift
-  ("$@" &>/dev/null) &
+  local msg=$1; shift
+  local logfile
+  logfile=$(mktemp)
+  "$@" >"$logfile" 2>&1 &
   local pid=$!
   spin "$pid" "$msg"
-  return $?
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo -e "  ${DIM}Error output:${NC}"
+    tail -8 "$logfile" | sed 's/^/    /'
+  fi
+  rm -f "$logfile"
+  return $rc
 }
 
 # ── Detect platform ────────────────────────────────────────────
@@ -81,10 +91,13 @@ install_system_deps() {
     fi
 
     info "Missing: ${missing[*]}"
-    run_spin "Updating package lists..." pkg update -y
-    run_spin "Installing ${missing[*]}..." pkg install -y "${missing[@]}"
-
-  elif $IS_LINUX; then
+    run_spin "Updating package lists..." pkg update -y || warn "pkg update failed, continuing..."
+    # Chromium needs the x11-repo
+    if need_cmd chromium-browser && need_cmd chromium; then
+      run_spin "Enabling x11-repo (required for chromium)..." pkg install -y x11-repo || warn "x11-repo install failed"
+    fi
+    run_spin "Installing ${missing[*]}..." pkg install -y "${missing[@]}" || \
+      warn "Some packages failed to install. Run manually: pkg install -y ${missing[*]}"
     local missing=()
     need_cmd python3 && missing+=(python3 python3-pip python3-venv)
     need_cmd node && missing+=(nodejs)
@@ -99,13 +112,15 @@ install_system_deps() {
 
     info "Missing: ${missing[*]}"
     if command -v apt &>/dev/null; then
-      run_spin "Updating package lists..." sudo apt update -y
-      run_spin "Installing ${missing[*]}..." sudo apt install -y "${missing[@]}" 2>/dev/null || \
-        run_spin "Retrying without chromium-browser..." sudo apt install -y "${missing[@]//chromium-browser/}"
+      run_spin "Updating package lists..." sudo apt update -y || warn "apt update failed, continuing..."
+      run_spin "Installing ${missing[*]}..." sudo apt install -y "${missing[@]}" || \
+        warn "Some packages failed. Run manually: sudo apt install -y ${missing[*]}"
     elif command -v pacman &>/dev/null; then
-      run_spin "Installing ${missing[*]}..." sudo pacman -Sy --noconfirm "${missing[@]}"
+      run_spin "Installing ${missing[*]}..." sudo pacman -Sy --noconfirm "${missing[@]}" || \
+        warn "Some packages failed. Run manually: sudo pacman -Sy --noconfirm ${missing[*]}"
     elif command -v dnf &>/dev/null; then
-      run_spin "Installing ${missing[*]}..." sudo dnf install -y "${missing[@]}"
+      run_spin "Installing ${missing[*]}..." sudo dnf install -y "${missing[@]}" || \
+        warn "Some packages failed. Run manually: sudo dnf install -y ${missing[*]}"
     else
       warn "Unknown package manager. Install manually: ${missing[*]}"
     fi
@@ -121,7 +136,8 @@ install_python_deps() {
     return
   fi
   run_spin "Installing Python packages (fastapi, uvicorn, requests)..." \
-    pip install -r requirements.txt 2>/dev/null || pip3 install -r requirements.txt
+    pip install -r requirements.txt 2>/dev/null || pip3 install -r requirements.txt || \
+    warn "pip install failed. Run manually: pip install -r requirements.txt"
 }
 
 # ── Install Node deps ──────────────────────────────────────────
@@ -135,9 +151,11 @@ install_node_deps() {
     return
   fi
   if $IS_TERMUX; then
-    run_spin "Installing playwright-core (Termux-compatible)..." npm install playwright-core@1.54.1 dotenv
+    run_spin "Installing playwright-core (Termux-compatible)..." npm install playwright-core@1.54.1 dotenv || \
+      warn "npm install failed. Run manually in playwright-termux: npm install"
   else
-    run_spin "Installing playwright..." npm install playwright dotenv
+    run_spin "Installing playwright..." npm install playwright dotenv || \
+      warn "npm install failed. Run manually in playwright-termux: npm install"
   fi
   cd "$SCRIPT_DIR"
 }
