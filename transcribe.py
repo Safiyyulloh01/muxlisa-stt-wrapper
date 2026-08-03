@@ -515,8 +515,10 @@ def get_token() -> Tuple[Optional[str], Optional[str]]:
             return get_token_playwright()
         key = os.environ.get(keys[forced])
         if not key:
-            return None, f"CAPTCHA_PROVIDER={forced} but {keys[forced]} not set"
-        return providers[forced](key)
+            print(f"⚠ CAPTCHA_PROVIDER={forced} but {keys[forced]} not set — falling back",
+                  file=sys.stderr)
+        else:
+            return providers[forced](key)
 
     # Default priority
     nopecha_key = os.environ.get("NOPECHA_API_KEY")
