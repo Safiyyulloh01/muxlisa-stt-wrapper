@@ -520,19 +520,21 @@ def get_token() -> Tuple[Optional[str], Optional[str]]:
         else:
             return providers[forced](key)
 
-    # Default priority
-    nopecha_key = os.environ.get("NOPECHA_API_KEY")
-    if nopecha_key:
-        return get_token_nopecha(nopecha_key)
-    nocaptcha_key = os.environ.get("NOCAPTCHA_API_KEY")
-    if nocaptcha_key:
-        return get_token_nocaptcha(nocaptcha_key)
-    captchaai_key = os.environ.get("CAPTCHAAI_API_KEY")
-    if captchaai_key:
-        return get_token_captchaai(captchaai_key)
-    capsolver_key = os.environ.get("CAPSOLVER_API_KEY")
-    if capsolver_key:
-        return get_token_capsolver(capsolver_key)
+    # Default priority — fall back to Playwright if a solver errors
+    for env_var, getter in [
+        ("NOPECHA_API_KEY", get_token_nopecha),
+        ("NOCAPTCHA_API_KEY", get_token_nocaptcha),
+        ("CAPTCHAAI_API_KEY", get_token_captchaai),
+        ("CAPSOLVER_API_KEY", get_token_capsolver),
+        ("TWOCAPTCHA_API_KEY", get_token_2captcha),
+    ]:
+        key = os.environ.get(env_var)
+        if not key:
+            continue
+        token, err = getter(key)
+        if token:
+            return token, None
+        print(f"⚠ {env_var} failed ({err}) — trying next provider", file=sys.stderr)
     return get_token_playwright()
 
 
@@ -662,11 +664,21 @@ def transcribe(audio_path: str, recaptcha_token: Optional[str] = None,
             texts.append("[error]")
 
     merged = " ".join(t for t in texts if t and t != "[error]").strip()
+
+    if not merged:
+        return {
+            "status_code": 502,
+            "error": "All chunks failed to transcribe",
+            "duration_sec": duration,
+            "chunks": texts,
+            "num_chunks": num_chunks,
+        }
+
     log(f"\n📝 Merged ({len(merged)} chars)")
 
     return {
-        "status_code": 200 if merged else 502,
-        "transcript": merged or None,
+        "status_code": 200,
+        "transcript": merged,
         "duration_sec": duration,
         "chunks": texts,
         "num_chunks": num_chunks,
