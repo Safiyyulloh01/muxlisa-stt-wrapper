@@ -60,7 +60,8 @@ run_spin() {
 IS_TERMUX=false
 IS_LINUX=false
 
-if [[ "$(uname -o 2>/dev/null)" == "Android" ]] || [[ -d /data/data/com.termux ]]; then
+# Termux sets $PREFIX; also check uname and the well-known path
+if [[ -n "${PREFIX:-}" ]] || [[ "$(uname -o 2>/dev/null)" == "Android" ]] || [[ -d /data/data/com.termux ]]; then
   IS_TERMUX=true
   info "Detected: Termux / Android"
 elif [[ "$(uname -s)" == "Linux" ]]; then
@@ -91,7 +92,8 @@ install_system_deps() {
     fi
 
     info "Missing: ${missing[*]}"
-    run_spin "Updating package lists..." pkg update -y || warn "pkg update failed, continuing..."
+    # Fix broken package state first (common on Termux, e.g. ffmpeg post-install)
+    run_spin "Upgrading existing packages (fixes broken state)..." pkg upgrade -y || warn "pkg upgrade failed, continuing..."
     # Chromium needs the x11-repo
     if need_cmd chromium-browser && need_cmd chromium; then
       run_spin "Enabling x11-repo (required for chromium)..." pkg install -y x11-repo || warn "x11-repo install failed"
@@ -228,7 +230,13 @@ verify() {
   
   python3 -c "import fastapi; print('FastAPI:', fastapi.__version__)" 2>/dev/null && ok "FastAPI OK" || warn "FastAPI not found"
   python3 -c "import requests; print('requests:', requests.__version__)" 2>/dev/null && ok "requests OK" || warn "requests not found"
-  node -e "require('playwright-core')" 2>/dev/null && ok "playwright-core OK" || node -e "require('playwright')" 2>/dev/null && ok "playwright OK" || warn "playwright(-core) not found"
+  # Check playwright from its own dir (node_modules lives there)
+  if (cd "$SCRIPT_DIR/playwright-termux" && node -e "require('playwright-core')" 2>/dev/null) || \
+     (cd "$SCRIPT_DIR/playwright-termux" && node -e "require('playwright')" 2>/dev/null); then
+    ok "playwright(-core) OK"
+  else
+    warn "playwright(-core) not found — run: cd playwright-termux && npm install"
+  fi
 
   if command -v chromium-browser &>/dev/null; then
     ok "chromium-browser: $(chromium-browser --version 2>/dev/null || true)"
@@ -268,6 +276,7 @@ echo -e "${GREEN}║  Installation complete!                      ║${NC}"
 echo -e "${GREEN}║                                              ║${NC}"
 echo -e "${GREEN}║  Start the API service:                      ║${NC}"
 echo -e "${GREEN}║    ./run.sh                                   ║${NC}"
+echo -e "${GREEN}║  (use ./run.sh with the ./ prefix)           ║${NC}"
 echo -e "${GREEN}║                                              ║${NC}"
 echo -e "${GREEN}║  Or transcribe a file directly:              ║${NC}"
 echo -e "${GREEN}║    python3 transcribe.py speech.wav           ║${NC}"
