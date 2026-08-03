@@ -22,7 +22,8 @@ from typing import Optional
 
 import requests
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # Import the core engine
@@ -48,6 +49,18 @@ app = FastAPI(
     docs_url="/docs",
 )
 
+# CORS — allow the web UI and any frontend to call the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Static dir for the web UI
+STATIC_DIR = Path(__file__).parent / "static"
+
 REQUEST_COUNT = 0
 START_TIME = time.time()
 
@@ -66,6 +79,15 @@ async def count_requests(request: Request, call_next):
 
 
 # ── Routes ─────────────────────────────────────────────────────
+
+@app.get("/", include_in_schema=False)
+def index():
+    """Serve the web UI."""
+    index_file = STATIC_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return {"message": "Muxlisa STT API — web UI not found, run setup"}
+
 
 @app.get("/v1/health")
 def health():

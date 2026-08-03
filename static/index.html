@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Muxlisa STT — Uzbek Speech to Text</title>
+<style>
+  :root {
+    --bg: #0f0f1a;
+    --card: #1a1a2e;
+    --accent: #7f56d9;
+    --accent2: #a738b0;
+    --text: #e8e8f0;
+    --muted: #8a8aa3;
+    --green: #33b242;
+    --red: #e82e2e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: radial-gradient(ellipse at top, #1c1c38 0%, var(--bg) 60%);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 20px;
+    padding: 40px;
+    max-width: 640px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    border: 1px solid rgba(255,255,255,.06);
+  }
+  h1 {
+    font-size: 1.6rem;
+    margin-bottom: 4px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle { color: var(--muted); font-size: .9rem; margin-bottom: 28px; }
+
+  /* Record button */
+  .recorder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .mic-btn {
+    width: 110px; height: 110px;
+    border-radius: 50%;
+    border: none;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    cursor: pointer;
+    position: relative;
+    transition: transform .15s, box-shadow .15s;
+    box-shadow: 0 8px 30px rgba(127,86,217,.4);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .mic-btn:hover { transform: scale(1.05); }
+  .mic-btn svg { width: 44px; height: 44px; fill: white; }
+  .mic-btn.recording {
+    background: var(--red);
+    animation: pulse 1.2s infinite;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(232,46,46,.5); }
+    70%  { box-shadow: 0 0 0 28px rgba(232,46,46,0); }
+    100% { box-shadow: 0 0 0 0 rgba(232,46,46,0); }
+  }
+  .timer { font-variant-numeric: tabular-nums; font-size: 1.4rem; color: var(--muted); }
+
+  .status {
+    text-align: center;
+    font-size: .95rem;
+    min-height: 24px;
+    margin-bottom: 12px;
+    color: var(--muted);
+  }
+  .status.working { color: var(--accent); }
+
+  /* Output */
+  .output-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .output-label span { font-size: .85rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  #copyBtn {
+    background: none; border: 1px solid rgba(255,255,255,.15); color: var(--muted);
+    padding: 4px 12px; border-radius: 8px; cursor: pointer; font-size: .8rem;
+  }
+  #copyBtn:hover { color: var(--text); border-color: var(--accent); }
+  #output {
+    width: 100%; min-height: 160px;
+    background: rgba(0,0,0,.25);
+    border: 1px dashed rgba(255,255,255,.15);
+    border-radius: 12px;
+    padding: 14px;
+    color: var(--text);
+    font-size: 1rem;
+    line-height: 1.5;
+    resize: vertical;
+  }
+  #output:focus { outline: none; border-color: var(--accent); }
+  .hint { margin-top: 16px; font-size: .8rem; color: var(--muted); text-align: center; }
+  .error-text { color: var(--red); }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Muxlisa STT</h1>
+  <p class="subtitle">Uzbek speech → text · free demo API</p>
+
+  <div class="recorder">
+    <button id="micBtn" class="mic-btn" title="Record">
+      <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+    </button>
+    <div class="timer" id="timer">00:00</div>
+    <div style="display:flex;gap:10px">
+      <button id="uploadBtn" class="mic-btn" style="width:64px;height:64px;border-radius:14px;background:rgba(255,255,255,.08)" title="Upload audio file">
+        <svg viewBox="0 0 24 24" style="width:28px;height:28px;fill:var(--muted)"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+      </button>
+      <input type="file" id="fileInput" accept="audio/*" hidden>
+      <button id="clearBtn" class="mic-btn" style="width:64px;height:64px;border-radius:14px;background:rgba(255,255,255,.08)" title="Clear output">
+        <svg viewBox="0 0 24 24" style="width:28px;height:28px;fill:var(--muted)"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="status" id="status">Press the mic and speak in Uzbek…</div>
+
+  <div class="output-label">
+    <span>Transcription</span>
+    <button id="copyBtn">Copy</button>
+  </div>
+  <textarea id="output" placeholder="Your transcription will appear here…" readonly></textarea>
+  <p class="hint">Max ~10s per chunk · longer recordings are auto-split & merged · demo limit</p>
+</div>
+
+<script>
+const micBtn    = document.getElementById('micBtn');
+const uploadBtn = document.getElementById('uploadBtn');
+const fileInput = document.getElementById('fileInput');
+const clearBtn  = document.getElementById('clearBtn');
+const timerEl   = document.getElementById('timer');
+const statusEl  = document.getElementById('status');
+const outputEl  = document.getElementById('output');
+const copyBtn   = document.getElementById('copyBtn');
+
+let mediaRecorder = null;
+let chunks = [];
+let recording = false;
+let timerInterval = null;
+let startTime = 0;
+
+// ── Recording ─────────────────────────────────────────────
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    chunks = [];
+    mediaRecorder.ondataavailable = e => chunks.push(e.data);
+    mediaRecorder.onstop = sendRecording;
+    mediaRecorder.start();
+    recording = true;
+
+    micBtn.classList.add('recording');
+    startTime = Date.now();
+    timerInterval = setInterval(updateTimer, 100);
+    setStatus('Recording… press again to stop', false);
+  } catch (e) {
+    setStatus('Microphone access denied', true);
+  }
+}
+
+function stopRecording() {
+  mediaRecorder.stop();
+  mediaRecorder.stream.getTracks().forEach(t => t.stop());
+  clearInterval(timerInterval);
+  recording = false;
+  micBtn.classList.remove('recording');
+  setStatus('Transcribing…', false);
+}
+
+function updateTimer() {
+  const s = Math.floor((Date.now() - startTime) / 1000);
+  timerEl.textContent = `00:${String(s).padStart(2, '0')}`;
+}
+
+micBtn.addEventListener('click', () => {
+  recording ? stopRecording() : startRecording();
+});
+
+// ── Send to API ───────────────────────────────────────────
+
+function sendRecording() {
+  const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+  uploadAudio(blob, 'recording.webm');
+}
+
+async function uploadAudio(blob, filename) {
+  const fd = new FormData();
+  fd.append('audio', blob, filename);
+  setStatus('Transcribing…', false);
+
+  try {
+    const resp = await fetch('/v1/transcribe', { method: 'POST', body: fd });
+    const data = await resp.json();
+
+    if (resp.ok) {
+      outputEl.value = data.transcript || '(empty result)';
+      setStatus(`Done · ${data.duration_sec || '?'}s · ${data.chunks || 1} chunk(s)`, false);
+    } else {
+      const detail = data.detail?.error || data.detail || 'Unknown error';
+      setStatus(`Error: ${detail}`, true);
+    }
+  } catch (e) {
+    setStatus('Network error — is the service running?', true);
+  }
+}
+
+// ── Upload file ───────────────────────────────────────────
+
+uploadBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) {
+    uploadAudio(fileInput.files[0], fileInput.files[0].name);
+    fileInput.value = '';
+  }
+});
+
+// ── Clear / copy ──────────────────────────────────────────
+
+clearBtn.addEventListener('click', () => {
+  outputEl.value = '';
+  timerEl.textContent = '00:00';
+  setStatus('Press the mic and speak in Uzbek…', false);
+});
+
+copyBtn.addEventListener('click', async () => {
+  if (!outputEl.value) return;
+  try {
+    await navigator.clipboard.writeText(outputEl.value);
+    copyBtn.textContent = 'Copied!';
+    setTimeout(() => copyBtn.textContent = 'Copy', 1500);
+  } catch { /* clipboard may be blocked */ }
+});
+
+function setStatus(msg, isError) {
+  statusEl.textContent = msg;
+  statusEl.className = 'status' + (isError ? ' error-text' : isError === false && msg !== 'Transcribing…' ? ' working' : '');
+  if (isError === false && (msg.startsWith('Done') || msg.startsWith('Recording'))) statusEl.className = 'status';
+}
+</script>
+</body>
+</html>
