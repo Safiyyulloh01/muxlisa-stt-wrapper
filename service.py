@@ -209,10 +209,24 @@ if __name__ == "__main__":
     print(f"  Docs:    http://{host}:{port}/docs")
     print(f"  Endpoint: POST /v1/transcribe")
     print()
-    print(f"  Nopecha:     {'✅' if os.environ.get('NOPECHA_API_KEY') else '❌'}  (5 free/day)")
-    print(f"  NoCaptchaAI: {'✅' if os.environ.get('NOCAPTCHA_API_KEY') else '❌'}  (200 free/day)")
-    print(f"  Capsolver:   {'✅' if os.environ.get('CAPSOLVER_API_KEY') else '❌'}")
-    print(f"  Playwright: {'✅' if os.path.exists(os.environ.get('CHROMIUM_PATH', '/data/data/com.termux/files/usr/bin/chromium-browser')) else '❌'}")
+    # Show configured providers
+    providers_status = []
+    if os.environ.get("NOPECHA_API_KEY"):    providers_status.append("Nopecha")
+    if os.environ.get("NOCAPTCHA_API_KEY"):  providers_status.append("NoCaptchaAI")
+    if os.environ.get("CAPTCHAAI_API_KEY"):  providers_status.append("CaptchaAI")
+    if os.environ.get("CAPSOLVER_API_KEY"):  providers_status.append("Capsolver")
+    if os.environ.get("TWOCAPTCHA_API_KEY"): providers_status.append("2Captcha")
+    if os.path.exists(os.environ.get("CHROMIUM_PATH", "/data/data/com.termux/files/usr/bin/chromium-browser")):
+        providers_status.append("Playwright")
+
+    forced = os.environ.get("CAPTCHA_PROVIDER", "").strip().lower()
+    if forced:
+        print(f"  Default provider: {forced} (forced via CAPTCHA_PROVIDER)")
+    elif providers_status:
+        print(f"  Default provider: {providers_status[0]} (first configured in priority order)")
+    else:
+        print("  Default provider: Playwright (no keys configured)")
+    print(f"  Configured: {', '.join(providers_status) if providers_status else 'none'}")
     print("─" * 50)
 
     uvicorn.run(app, host=host, port=port, log_level="info")
