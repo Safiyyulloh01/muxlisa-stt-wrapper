@@ -114,35 +114,10 @@ install_node_deps() {
 setup_env() {
   local env_file="$SCRIPT_DIR/playwright-termux/.env"
   
-  if [[ -f "$env_file" ]] && grep -q "CHROMIUM_PATH" "$env_file" 2>/dev/null; then
-    ok ".env already exists"
-    return
-  fi
+  # Ensure .env dir exists with Chromium path
+  mkdir -p "$SCRIPT_DIR/playwright-termux"
 
-  echo ""
-  info "── .env Setup ──────────────────────────────"
-
-  # Nopecha API key (free: 5 solves/day)
-  read -rp "Nopecha API key (free at nopecha.com, press Enter to skip): " nopecha_key
-  if [[ -n "$nopecha_key" ]]; then
-    echo "NOPECHA_API_KEY=$nopecha_key" > "$env_file"
-    ok "Nopecha configured (5 free solves/day)"
-  fi
-
-  # NoCaptchaAI API key (free: 200 solves/day)
-  read -rp "NoCaptchaAI API key (free at nocaptchaai.com, press Enter to skip): " nocaptcha_key
-  if [[ -n "$nocaptcha_key" ]]; then
-    echo "NOCAPTCHA_API_KEY=$nocaptcha_key" >> "$env_file"
-    ok "NoCaptchaAI configured"
-  fi
-
-  # Capsolver API key (fallback)
-  read -rp "Capsolver API key (press Enter to skip): " capsolver_key
-  if [[ -n "$capsolver_key" ]]; then
-    echo "CAPSOLVER_API_KEY=$capsolver_key" >> "$env_file"
-  fi
-
-  # Chromium path
+  # Detect Chromium path
   local chromium_path=""
   if $IS_TERMUX; then
     chromium_path="/data/data/com.termux/files/usr/bin/chromium-browser"
@@ -154,16 +129,33 @@ setup_env() {
     chromium_path=$(command -v google-chrome)
   fi
 
+  # Write base .env (preserving existing keys)
+  local tmp_env="${env_file}.base"
+  if [[ -f "$env_file" ]]; then
+    cp "$env_file" "$tmp_env"
+  else
+    > "$tmp_env"
+  fi
+  grep -v "^CHROMIUM_PATH=\|^PLAYWRIGHT_BROWSERS_PATH=" "$tmp_env" > "${tmp_env}.2" 2>/dev/null || true
+  mv "${tmp_env}.2" "$tmp_env"
+  echo "PLAYWRIGHT_BROWSERS_PATH=0" >> "$tmp_env"
   if [[ -n "$chromium_path" ]]; then
-    echo "CHROMIUM_PATH=$chromium_path" >> "$env_file"
+    echo "CHROMIUM_PATH=$chromium_path" >> "$tmp_env"
     ok "Chromium: $chromium_path"
   else
-    warn "Chromium not found. Install manually or set CHROMIUM_PATH in .env"
-    echo "# CHROMIUM_PATH=/path/to/chromium" >> "$env_file"
+    warn "Chromium not found. Set CHROMIUM_PATH in .env"
   fi
+  mv "$tmp_env" "$env_file"
 
-  echo "PLAYWRIGHT_BROWSERS_PATH=0" >> "$env_file"
-  ok ".env created at $env_file"
+  # ── Interactive captcha solver selection ────────────────────
+  if [[ -t 0 ]] && command -v tput &>/dev/null; then
+    header "Captcha Solver Setup"
+    info "Choose a provider (↑/↓ arrows, Enter to select)..."
+    "$SCRIPT_DIR/setup_captcha.sh"
+  else
+    warn "Non-interactive shell — skipping captcha setup."
+    info "Run ./setup_captcha.sh manually to configure a solver."
+  fi
 }
 
 # ── Verify ─────────────────────────────────────────────────────

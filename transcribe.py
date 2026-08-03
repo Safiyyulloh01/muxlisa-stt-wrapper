@@ -383,15 +383,63 @@ def get_token_nopecha(api_key: str) -> Tuple[Optional[str], Optional[str]]:
     return None, "Nopecha timeout"
 
 
+def get_token_captchaai(api_key: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Get reCAPTCHA v3 token via CaptchaAI (2Captcha-style API).
+    
+    Paid service (from ~$15/mo) with free trial via support ticket.
+    Uses in.php/res.php endpoints like 2Captcha.
+    Sign up at https://captchaai.com
+    """
+    # Submit task
+    try:
+        r = requests.post("https://ocr.captchaai.com/in.php", data={
+            "key": api_key,
+            "method": "userrecaptcha",
+            "version": "v3",
+            "action": "enquiryFormSubmit",
+            "googlekey": RECAPTCHA_SITE_KEY,
+            "pageurl": PAGE_URL,
+            "json": 1,
+        }, timeout=20)
+        body = r.json()
+    except Exception as e:
+        return None, f"CaptchaAI connection error: {e}"
+
+    if body.get("status") != 1:
+        return None, f"CaptchaAI: {body.get('request', body)}"
+
+    task_id = body["request"]
+
+    # Poll for result
+    for _ in range(120):
+        time.sleep(5)
+        try:
+            r = requests.get("https://ocr.captchaai.com/res.php", params={
+                "key": api_key, "action": "get", "id": task_id, "json": 1,
+            }, timeout=15)
+            body = r.json()
+        except Exception as e:
+            return None, f"CaptchaAI poll error: {e}"
+
+        if body.get("status") == 1:
+            return body["request"], None
+        if body.get("request") != "CAPCHA_NOT_READY":
+            return None, f"CaptchaAI: {body.get('request', body)}"
+
+    return None, "CaptchaAI timeout"
+
+
 def get_token() -> Tuple[Optional[str], Optional[str]]:
     """
     Get a reCAPTCHA v3 token using the best available method.
     
     Priority:
-      1. NOPECHA_API_KEY env var -> Nopecha (5 free solves/day ✅)
-      2. NOCAPTCHA_API_KEY env var -> NoCaptchaAI (200 free solves/day)
-      3. CAPSOLVER_API_KEY env var -> Capsolver API
-      4. Playwright + Chromium     -> local browser
+      1. NOPECHA_API_KEY    -> Nopecha (5 free solves/day ✅)
+      2. NOCAPTCHA_API_KEY  -> NoCaptchaAI (200 free solves/day)
+      3. CAPTCHAAI_API_KEY  -> CaptchaAI (paid, ~$15/mo)
+      4. CAPSOLVER_API_KEY  -> Capsolver API
+      5. Playwright+Chromium -> local browser
     """
     nopecha_key = os.environ.get("NOPECHA_API_KEY")
     if nopecha_key:
@@ -399,6 +447,9 @@ def get_token() -> Tuple[Optional[str], Optional[str]]:
     nocaptcha_key = os.environ.get("NOCAPTCHA_API_KEY")
     if nocaptcha_key:
         return get_token_nocaptcha(nocaptcha_key)
+    captchaai_key = os.environ.get("CAPTCHAAI_API_KEY")
+    if captchaai_key:
+        return get_token_captchaai(captchaai_key)
     capsolver_key = os.environ.get("CAPSOLVER_API_KEY")
     if capsolver_key:
         return get_token_capsolver(capsolver_key)
