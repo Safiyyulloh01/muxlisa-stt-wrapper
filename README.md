@@ -101,6 +101,64 @@ per request, each transcription gets a **fresh** reCAPTCHA token in
 
 Manual start: `cd playwright-termux && node token_server.js`
 
+## Captcha Provider Configuration
+
+The service uses captcha solving services to get reCAPTCHA tokens.
+
+### Interactive setup menu
+
+```bash
+./setup_captcha.sh
+```
+
+Arrow keys ↑/↓ to navigate, descriptions update as you move, Enter to
+select a provider, type the API key, Enter confirms. The chosen provider
+is saved as the default in `.env`.
+
+### Providers
+
+| Provider | Env var | Cost |
+|---|---|---|
+| Nopecha | `NOPECHA_API_KEY` | Free (5 solves/day via GitHub sign-in) |
+| NoCaptchaAI | `NOCAPTCHA_API_KEY` | Free (200/day claimed) |
+| Capsolver | `CAPSOLVER_API_KEY` | Paid (~$0.002/solve) |
+| CaptchaAI | `CAPTCHAAI_API_KEY` | Paid (~$15/mo, trial via ticket) |
+| 2Captcha | `TWOCAPTCHA_API_KEY` | Paid (~$1-3/1000) |
+| Playwright | *(no key)* | Free (local Chromium, needs warming) |
+
+### Choosing the default provider
+
+Set `CAPTCHA_PROVIDER` in `playwright-termux/.env`:
+
+```bash
+CAPTCHA_PROVIDER=playwright      # use warmed local browser
+CAPTCHA_PROVIDER=nopecha         # or nocaptchaai | captchaai | capsolver | twocaptcha
+```
+
+Or via env var (overrides .env):
+
+```bash
+CAPTCHA_PROVIDER=playwright ./run.sh
+```
+
+### Priority order (if CAPTCHA_PROVIDER unset)
+
+1. Nopecha → 2. NoCaptchaAI → 3. CaptchaAI → 4. Capsolver → 5. 2Captcha → 6. Playwright
+
+The service uses the **first provider with a valid key**. If a solver
+fails (bad key, etc.), it warns and tries the next one automatically.
+
+### Quick setup without the menu
+
+```bash
+echo "CAPTCHA_PROVIDER=playwright" >> playwright-termux/.env
+# or add an API key:
+echo "NOPECHA_API_KEY=your-key" >> playwright-termux/.env
+```
+
+Restart `./run.sh` after changes. The startup banner shows which
+provider is active.
+
 ## How It Works
 
 The Muxlisa frontend was reverse-engineered to extract:
